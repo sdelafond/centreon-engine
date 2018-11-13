@@ -1,0 +1,35 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/default.mk
+
+export DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+CFLAGS+=$(CPPFLAGS)
+CXXFLAGS+=$(CPPFLAGS)
+
+export CMAKE_OPTIONS := \
+  -DCMAKE_C_COMPILER="$(CC)" \
+  -DCMAKE_CXX_COMPILER="$(CXX)" \
+  -DCMAKE_CXX_FLAGS="$(CXXFLAGS)" \
+  -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="$(LDFLAGS)" \
+  -DWITH_PREFIX=/usr \
+  -DWITH_PREFIX_BIN=/usr/sbin \
+  -DWITH_PREFIX_LIB=/usr/lib/centreon-engine \
+  -DWITH_LOGROTATE_SCRIPT=1 \
+  -DWITH_LOGROTATE_DIR=/etc/logrotate.d \
+  -DWITH_VAR_DIR=/var/lib/centreon-engine \
+  -DWITH_PKGCONFIG_SCRIPT=1 \
+  -DWITH_PKGCONFIG_DIR=/usr/lib/$(DEB_HOST_MULTIARCH)/pkgconfig \
+  -DWITH_STARTUP_SCRIPT=systemd \
+  -DWITH_STARTUP_DIR=/lib/systemd/system \
+  -DWITH_PREFIX_CONF=/etc/centreon-engine \
+  -DWITH_USER=centreon-engine \
+  -DWITH_GROUP=centreon-engine
+
+%:
+	dh $@ --sourcedirectory=build --no-parallel
+
+override_dh_auto_configure:
+	dh_auto_configure --sourcedirectory=build -- $(CMAKE_OPTIONS)

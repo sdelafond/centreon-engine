@@ -1,0 +1,44 @@
+From: =?utf-8?q?S=C3=A9bastien_Delafond?= <sdelafond@gmail.com>
+Date: Mon, 19 Nov 2018 16:48:11 +0100
+Subject: Install under DESTDIR/
+
+---
+ build/CMakeLists.txt | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/build/CMakeLists.txt b/build/CMakeLists.txt
+index f8c3fe6..333d636 100644
+--- a/build/CMakeLists.txt
++++ b/build/CMakeLists.txt
+@@ -788,23 +788,23 @@ if (CREATE_FILES)
+   install(CODE "
+   function(mkdir_chown user group path)
+     if (APPLE OR (UNIX AND NOT CYGWIN))
+-      if (NOT EXISTS \"\${path}\")
+-        file(MAKE_DIRECTORY \"\${path}\")
+-        execute_process(COMMAND \"chown\" \"\${user}:\${group}\" \"\${path}\")
++      if (NOT EXISTS \"\$ENV{DESTDIR}\${path}\")
++        file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${path}\")
++        execute_process(COMMAND \"chown\" \"\${user}:\${group}\" \"\$ENV{DESTDIR}\${path}\")
+       endif ()
+     else()
+-      file(MAKE_DIRECTORY \"\${path}\")
++      file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${path}\")
+     endif ()
+   endfunction()
+ 
+   function(touch_chown user group file)
+     if (APPLE OR (UNIX AND NOT CYGWIN))
+-      if (NOT EXISTS \"\${file}\")
+-        file(WRITE \"\${file}\" \"\")
+-        execute_process(COMMAND \"chown\" \"\${user}:\${group}\" \"\${file}\")
++      if (NOT EXISTS \"\$ENV{DESTDIR}\${file}\")
++        file(WRITE \"\$ENV{DESTDIR}\${file}\" \"\")
++        execute_process(COMMAND \"chown\" \"\${user}:\${group}\" \"\$ENV{DESTDIR}\${file}\")
+       endif ()
+     else()
+-      file(WRITE \"{file}\" \"\")
++      file(WRITE \"\$ENV{DESTDIR}\${file}\" \"\")
+     endif ()
+   endfunction()
+ 
