@@ -3,6 +3,7 @@
 set -e
 
 adduser --system --home /var/lib/centreon-engine --no-create-home --group centreon-engine
-chown -R centreon-engine:centreon-engine /var/lib/centreon-engine
+mkdir -p /var/log/centreon-engine
+chown -R centreon-engine:centreon-engine /var/lib/centreon-engine /var/log/centreon-engine
 
 #DEBHELPER#
