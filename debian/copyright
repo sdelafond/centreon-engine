@@ -4,24 +4,48 @@ Source: https://github.com/centreon/centreon-engine
 
 Files: *
 Copyright: 2011-2013 Centreon
-License: Apache-2.0
+License: GPL-2
+
+Files: build/CodeCoverage.cmake
+Copyright: 2012-2017 Lars Bilke
+License: BSD-3
+
+Files: build/broker/CMakeLists.txt,build/checks/CMakeLists.txt,build/commands/CMakeLists.txt,build/compatibility/CMakeLists.txt,build/conf/CMakeLists.txt,build/configuration/CMakeLists.txt,build/configuration/applier/CMakeLists.txt,build/deleter/CMakeLists.txt,build/events/CMakeLists.txt,build/logging/CMakeLists.txt,build/macros/CMakeLists.txt,build/modules/CMakeLists.txt,build/modules/bench/CMakeLists.txt,build/modules/external_commands/CMakeLists.txt,build/objects/CMakeLists.txt,build/package.cmake,build/retention/CMakeLists.txt,build/retention/applier/CMakeLists.txt,build/scripts/ws_stub_builder/CMakeLists.txt,build/test/CMakeLists.txt,build/test/broker/CMakeLists.txt,build/test/checks/CMakeLists.txt,build/test/commands/CMakeLists.txt,build/test/compatibility/CMakeLists.txt,build/test/configuration/CMakeLists.txt,build/test/configuration/applier/CMakeLists.txt,build/test/core/CMakeLists.txt,build/test/deleter/CMakeLists.txt,build/test/events/CMakeLists.txt,build/test/logging/CMakeLists.txt,build/test/macros/CMakeLists.txt,build/test/modules/CMakeLists.txt,build/test/modules/external_commands/CMakeLists.txt,build/test/modules/webservice/CMakeLists.txt,build/test/modules/webservice/server/CMakeLists.txt,build/test/objects/CMakeLists.txt,build/test/retention/CMakeLists.txt,build/test/retention/applier/CMakeLists.txt
+Copyright: 2011-2013 Merethis
+License: GPL-2
+
+Files: conf/*,doc/exploit/centenginestats.rst
+Copyright: Ethan Galstad, Merethis
+License: GPL-2
+
+Files: inc/*,modules/*,src/*
+Copyright: Ethan Galstad, Merethis, Centreon, Andreas Ericsson, Max Schubert, Nagios Core Development Team and Community Contributors, Icinga Development Team
+License: GPL-2
+
+Files: build/tests/googletest
+Copyright: 2008 Google Inc.
+License: BSD-3
 
 Files: debian/*
 Copyright: 2018 Sebastien Delafond <seb@debian.org>
-License: Apache-2.0
+License: GPL-2
 
-License: Apache-2.0
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+License: GPL-2
+ See /usr/share/common-licenses/GPL-2
+
+License: BSD-3
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions
+ are met:
  .
- https://www.apache.org/licenses/LICENSE-2.0
+ 1. Redistributions of source code must retain the above copyright
+ notice, this list of conditions and the following disclaimer.
  .
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+ 2. Redistributions in binary form must reproduce the above copyright
+ notice, this list of conditions and the following disclaimer in the
+ documentation and/or other materials provided with the distribution.
  .
- On Debian systems, the complete text of the Apache version 2.0 license
- can be found in "/usr/share/common-licenses/Apache-2.0".
+ 3. Neither the name of the copyright holder nor the names of its
+ contributors may be used to endorse or promote products derived from
+ this software without specific prior written permission.
+
