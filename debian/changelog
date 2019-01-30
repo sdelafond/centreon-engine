@@ -1,3 +1,9 @@
+centreon-engine (18.10.0-4) unstable; urgency=medium
+
+  * Remove leftover /var/log/centreon-engine upong purge'ing (Closes: #920830)
+
+ -- Sebastien Delafond <seb@debian.org>  Wed, 30 Jan 2019 08:47:41 +0100
+
 centreon-engine (18.10.0-3) unstable; urgency=medium
 
   * Update d/copyright
