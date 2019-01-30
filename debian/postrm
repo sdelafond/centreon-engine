@@ -1,0 +1,9 @@
+#!/bin/sh
+
+set -e
+
+if [ $1 = purge ] ; then
+  rm -fr /var/log/centreon-engine
+fi
+
+#DEBHELPER#
