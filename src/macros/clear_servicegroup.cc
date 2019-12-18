@@ -43,25 +43,13 @@ int clear_servicegroup_macros_r(nagios_macros* mac) {
   for (unsigned int i = 0;
        i < sizeof(to_free) / sizeof(*to_free);
        ++i) {
-    delete[] mac->x[i];
-    mac->x[i] = NULL;
+    mac->x[i] = "";
   }
 
   // Clear pointers.
-  mac->servicegroup_ptr = NULL;
+  mac->servicegroup_ptr = nullptr;
 
   return (OK);
-}
-
-/**
- *  Clear global servicegroup macros.
- *
- *  @return OK on success.
- *
- *  @see clear_servicegroup_macros_r
- */
-int clear_servicegroup_macros() {
-  return (clear_servicegroup_macros_r(get_global_macros()));
 }
 
 }

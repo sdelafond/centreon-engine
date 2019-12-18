@@ -18,17 +18,28 @@
 */
 
 #include <gtest/gtest.h>
-#include "com/centreon/engine/objects/timeperiod.hh"
+#include "com/centreon/clib.hh"
+#include "com/centreon/engine/configuration/applier/state.hh"
 #include "com/centreon/engine/timeperiod.hh"
 #include "tests/timeperiod/utils.hh"
 
+using namespace com::centreon;
 using namespace com::centreon::engine;
 
 class        GetNextValidTimeForwardDST : public ::testing::Test {
  public:
-  void       SetUp() {
+  void       SetUp() override {
+    clib::load();
+    com::centreon::logging::engine::load();
+    configuration::applier::state::load();
     _creator.new_timeperiod();
     _computed = (time_t)-1;
+  }
+
+  void TearDown() override {
+    configuration::applier::state::unload();
+    com::centreon::logging::engine::unload();
+    clib::unload();
   }
 
   //

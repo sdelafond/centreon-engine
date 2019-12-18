@@ -19,13 +19,13 @@
 ** <http://www.gnu.org/licenses/>.
 */
 
+#include <memory>
 #include <unistd.h>
 #include "com/centreon/engine/broker.hh"
 #include "com/centreon/engine/flapping.hh"
 #include "com/centreon/engine/globals.hh"
 #include "com/centreon/engine/nebmods.hh"
 #include "com/centreon/engine/nebstructs.hh"
-#include "com/centreon/engine/notifications.hh"
 #include "com/centreon/engine/sehandlers.hh"
 #include "com/centreon/engine/string.hh"
 
@@ -65,7 +65,7 @@ void broker_acknowledgement_data(
 
   // Fill struct with relevant data.
   host* temp_host(NULL);
-  service* temp_service(NULL);
+  com::centreon::engine::service* temp_service(NULL);
   nebstruct_acknowledgement_data ds;
   ds.type = type;
   ds.flags = flags;
@@ -73,16 +73,16 @@ void broker_acknowledgement_data(
   ds.timestamp = get_broker_timestamp(timestamp);
   ds.acknowledgement_type = acknowledgement_type;
   if (acknowledgement_type == SERVICE_ACKNOWLEDGEMENT) {
-    temp_service = (service*)data;
-    ds.host_name = temp_service->host_name;
-    ds.service_description = temp_service->description;
-    ds.state = temp_service->current_state;
+    temp_service = (com::centreon::engine::service*)data;
+    ds.host_name = const_cast<char *>(temp_service->get_hostname().c_str());
+    ds.service_description = const_cast<char*>(temp_service->get_description().c_str());
+    ds.state = temp_service->get_current_state();
   }
   else {
     temp_host = (host*)data;
-    ds.host_name = temp_host->name;
+    ds.host_name = const_cast<char *>(temp_host->get_name().c_str());
     ds.service_description = NULL;
-    ds.state = temp_host->current_state;
+    ds.state = temp_host->get_current_state();
   }
   ds.object_ptr = data;
   ds.author_name = ack_author;
@@ -314,7 +314,7 @@ void broker_adaptive_service_data(
        int type,
        int flags,
        int attr,
-       service* svc,
+       com::centreon::engine::service* svc,
        int command_type,
        unsigned long modattr,
        unsigned long modattrs,
@@ -417,7 +417,7 @@ void broker_command_data(
        int type,
        int flags,
        int attr,
-       command* cmd,
+       commands::command* cmd,
        struct timeval const* timestamp) {
   // Config check.
   if (!(config->event_broker_options() & BROKER_COMMAND_DATA))
@@ -433,7 +433,6 @@ void broker_command_data(
 
   // Make callback.
   neb_make_callbacks(NEBCALLBACK_COMMAND_DATA, &ds);
-  return;
 }
 
 /**
@@ -528,8 +527,8 @@ int broker_contact_notification_data(
       struct timeval end_time,
       void* data,
       contact* cntct,
-      char* ack_author,
-      char* ack_data,
+      char const* ack_author,
+      char const* ack_data,
       int escalated,
       struct timeval const* timestamp) {
   // Config check.
@@ -539,7 +538,7 @@ int broker_contact_notification_data(
   // Fill struct with relevant data.
   nebstruct_contact_notification_data ds;
   host* temp_host(NULL);
-  service* temp_service(NULL);
+  com::centreon::engine::service* temp_service(NULL);
   ds.type = type;
   ds.flags = flags;
   ds.attr = attr;
@@ -548,25 +547,25 @@ int broker_contact_notification_data(
   ds.start_time = start_time;
   ds.end_time = end_time;
   ds.reason_type = reason_type;
-  ds.contact_name = cntct->name;
-  if (notification_type == SERVICE_NOTIFICATION) {
-    temp_service = (service*)data;
-    ds.host_name = temp_service->host_name;
-    ds.service_description = temp_service->description;
-    ds.state = temp_service->current_state;
-    ds.output = temp_service->plugin_output;
+  ds.contact_name = const_cast<char*>(cntct->get_name().c_str());
+  if (notification_type == notifier::service_notification) {
+    temp_service = (com::centreon::engine::service*)data;
+    ds.host_name = const_cast<char*>(temp_service->get_hostname().c_str());
+    ds.service_description = const_cast<char*>(temp_service->get_description().c_str());
+    ds.state = temp_service->get_current_state();
+    ds.output = const_cast<char*>(temp_service->get_plugin_output().c_str());
   }
   else {
     temp_host = (host*)data;
-    ds.host_name = temp_host->name;
+    ds.host_name = const_cast<char *>(temp_host->get_name().c_str());
     ds.service_description = NULL;
-    ds.state = temp_host->current_state;
-    ds.output = temp_host->plugin_output;
+    ds.state = temp_host->get_current_state();
+    ds.output = const_cast<char *>(temp_host->get_plugin_output().c_str());
   }
   ds.object_ptr = data;
   ds.contact_ptr = cntct;
-  ds.ack_author = ack_author;
-  ds.ack_data = ack_data;
+  ds.ack_author = const_cast<char*>(ack_author);
+  ds.ack_data = const_cast<char*>(ack_data);
   ds.escalated = escalated;
 
   // Make callbacks.
@@ -606,8 +605,8 @@ int broker_contact_notification_method_data(
       void* data,
       contact* cntct,
       char const* cmd,
-      char* ack_author,
-      char* ack_data,
+      char const* ack_author,
+      char const* ack_data,
       int escalated,
       struct timeval const* timestamp) {
   // Config check.
@@ -627,7 +626,7 @@ int broker_contact_notification_method_data(
   // Fill struct with relevant data.
   nebstruct_contact_notification_method_data ds;
   host* temp_host(NULL);
-  service* temp_service(NULL);
+  com::centreon::engine::service* temp_service(NULL);
   ds.type = type;
   ds.flags = flags;
   ds.attr = attr;
@@ -636,27 +635,27 @@ int broker_contact_notification_method_data(
   ds.start_time = start_time;
   ds.end_time = end_time;
   ds.reason_type = reason_type;
-  ds.contact_name = cntct->name;
+  ds.contact_name = const_cast<char*>(cntct->get_name().c_str());
   ds.command_name = command_name;
   ds.command_args = command_args;
-  if (notification_type == SERVICE_NOTIFICATION) {
-    temp_service = (service*)data;
-    ds.host_name = temp_service->host_name;
-    ds.service_description = temp_service->description;
-    ds.state = temp_service->current_state;
-    ds.output = temp_service->plugin_output;
+  if (notification_type == notifier::service_notification) {
+    temp_service = static_cast<service*>(data);
+    ds.host_name = const_cast<char*>(temp_service->get_hostname().c_str());
+    ds.service_description = const_cast<char*>(temp_service->get_description().c_str());
+    ds.state = temp_service->get_current_state();
+    ds.output = const_cast<char*>(temp_service->get_plugin_output().c_str());
   }
   else {
     temp_host = (host*)data;
-    ds.host_name = temp_host->name;
+    ds.host_name = const_cast<char *>(temp_host->get_name().c_str());
     ds.service_description = NULL;
-    ds.state = temp_host->current_state;
-    ds.output = temp_host->plugin_output;
+    ds.state = temp_host->get_current_state();
+    ds.output = const_cast<char *>(temp_host->get_plugin_output().c_str());
   }
   ds.object_ptr = data;
   ds.contact_ptr = cntct;
-  ds.ack_author = ack_author;
-  ds.ack_data = ack_data;
+  ds.ack_author = const_cast<char*>(ack_author);
+  ds.ack_data = const_cast<char*>(ack_data);
   ds.escalated = escalated;
 
   // Make callbacks.
@@ -868,7 +867,7 @@ int broker_event_handler(
   // Fill struct with relevant data.
   nebstruct_event_handler_data ds;
   host* temp_host(NULL);
-  service* temp_service(NULL);
+  com::centreon::engine::service* temp_service(NULL);
   ds.type = type;
   ds.flags = flags;
   ds.attr = attr;
@@ -876,13 +875,13 @@ int broker_event_handler(
   ds.eventhandler_type = eventhandler_type;
   if ((eventhandler_type == SERVICE_EVENTHANDLER)
       || (eventhandler_type == GLOBAL_SERVICE_EVENTHANDLER)) {
-    temp_service = (service*)data;
-    ds.host_name = temp_service->host_name;
-    ds.service_description = temp_service->description;
+    temp_service = (com::centreon::engine::service*)data;
+    ds.host_name = const_cast<char*>(temp_service->get_hostname().c_str());
+    ds.service_description = const_cast<char*>(temp_service->get_description().c_str());
   }
   else {
     temp_host = (host*)data;
-    ds.host_name = temp_host->name;
+    ds.host_name = const_cast<char *>(temp_host->get_name().c_str());
     ds.service_description = NULL;
   }
   ds.object_ptr = data;
@@ -982,23 +981,23 @@ void broker_flapping_data(
   // Fill struct with relevant data.
   nebstruct_flapping_data ds;
   host* temp_host(NULL);
-  service* temp_service(NULL);
+  com::centreon::engine::service* temp_service(NULL);
   ds.type = type;
   ds.flags = flags;
   ds.attr = attr;
   ds.timestamp = get_broker_timestamp(timestamp);
   ds.flapping_type = flapping_type;
   if (flapping_type == SERVICE_FLAPPING) {
-    temp_service = (service*)data;
-    ds.host_name = temp_service->host_name;
-    ds.service_description = temp_service->description;
-    ds.comment_id = temp_service->flapping_comment_id;
+    temp_service = (com::centreon::engine::service*)data;
+    ds.host_name = const_cast<char*>(temp_service->get_hostname().c_str());
+    ds.service_description = const_cast<char*>(temp_service->get_description().c_str());
+    ds.comment_id = temp_service->get_flapping_comment_id();
   }
   else {
     temp_host = (host*)data;
-    ds.host_name = temp_host->name;
+    ds.host_name = const_cast<char *>(temp_host->get_name().c_str());
     ds.service_description = NULL;
-    ds.comment_id = temp_host->flapping_comment_id;
+    ds.comment_id = temp_host->get_flapping_comment_id();
   }
   ds.object_ptr = data;
   ds.percent_change = percent_change;
@@ -1148,11 +1147,11 @@ int broker_host_check(
   ds.flags = flags;
   ds.attr = attr;
   ds.timestamp = get_broker_timestamp(timestamp);
-  ds.host_name = hst->name;
+  ds.host_name = const_cast<char *>(hst->get_name().c_str());
   ds.object_ptr = hst;
   ds.check_type = check_type;
-  ds.current_attempt = hst->current_attempt;
-  ds.max_attempts = hst->max_attempts;
+  ds.current_attempt = hst->get_current_attempt();
+  ds.max_attempts = hst->get_max_attempts();
   ds.state = state;
   ds.state_type = state_type;
   ds.timeout = timeout;
@@ -1315,8 +1314,8 @@ int broker_notification_data(
       struct timeval start_time,
       struct timeval end_time,
       void* data,
-      char* ack_author,
-      char* ack_data,
+      char const* ack_author,
+      char const* ack_data,
       int escalated,
       int contacts_notified,
       struct timeval const* timestamp) {
@@ -1327,7 +1326,7 @@ int broker_notification_data(
   // Fill struct with relevant data.
   nebstruct_notification_data ds;
   host* temp_host(NULL);
-  service* temp_service(NULL);
+  com::centreon::engine::service* temp_service(NULL);
   ds.type = type;
   ds.flags = flags;
   ds.attr = attr;
@@ -1336,23 +1335,23 @@ int broker_notification_data(
   ds.start_time = start_time;
   ds.end_time = end_time;
   ds.reason_type = reason_type;
-  if (notification_type == SERVICE_NOTIFICATION) {
-    temp_service = (service*)data;
-    ds.host_name = temp_service->host_name;
-    ds.service_description = temp_service->description;
-    ds.state = temp_service->current_state;
-    ds.output = temp_service->plugin_output;
+  if (notification_type == notifier::service_notification) {
+    temp_service = (com::centreon::engine::service*)data;
+    ds.host_name = const_cast<char*>(temp_service->get_hostname().c_str());
+    ds.service_description = const_cast<char*>(temp_service->get_description().c_str());
+    ds.state = temp_service->get_current_state();
+    ds.output = const_cast<char*>(temp_service->get_plugin_output().c_str());
   }
   else {
     temp_host = (host*)data;
-    ds.host_name = temp_host->name;
+    ds.host_name = const_cast<char *>(temp_host->get_name().c_str());
     ds.service_description = NULL;
-    ds.state = temp_host->current_state;
-    ds.output = temp_host->plugin_output;
+    ds.state = temp_host->get_current_state();
+    ds.output = const_cast<char *>(temp_host->get_plugin_output().c_str());
   }
   ds.object_ptr = data;
-  ds.ack_author = ack_author;
-  ds.ack_data = ack_data;
+  ds.ack_author = const_cast<char*>(ack_author);
+  ds.ack_data = const_cast<char*>(ack_data);
   ds.escalated = escalated;
   ds.contacts_notified = contacts_notified;
 
@@ -1464,9 +1463,9 @@ void broker_relation_data(
        int flags,
        int attr,
        host* hst,
-       service* svc,
+       com::centreon::engine::service* svc,
        host* dep_hst,
-       service* dep_svc,
+       com::centreon::engine::service* dep_svc,
        struct timeval const* timestamp) {
   // Config check.
   if (!(config->event_broker_options() & BROKER_RELATION_DATA))
@@ -1544,7 +1543,7 @@ int broker_service_check(
       int type,
       int flags,
       int attr,
-      service* svc,
+      com::centreon::engine::service* svc,
       int check_type,
       struct timeval start_time,
       struct timeval end_time,
@@ -1578,14 +1577,14 @@ int broker_service_check(
   ds.flags = flags;
   ds.attr = attr;
   ds.timestamp = get_broker_timestamp(timestamp);
-  ds.host_name = svc->host_name;
-  ds.service_description = svc->description;
+  ds.host_name = const_cast<char*>(svc->get_hostname().c_str());
+  ds.service_description = const_cast<char*>(svc->get_description().c_str());
   ds.object_ptr = svc;
   ds.check_type = check_type;
-  ds.current_attempt = svc->current_attempt;
-  ds.max_attempts = svc->max_attempts;
-  ds.state = svc->current_state;
-  ds.state_type = svc->state_type;
+  ds.current_attempt = svc->get_current_attempt();
+  ds.max_attempts = svc->get_max_attempts();
+  ds.state = svc->get_current_state();
+  ds.state_type = svc->get_state_type();
   ds.timeout = timeout;
   ds.command_name = command_name;
   ds.command_args = command_args;
@@ -1596,9 +1595,9 @@ int broker_service_check(
   ds.execution_time = exectime;
   ds.latency = latency;
   ds.return_code = retcode;
-  ds.output = svc->plugin_output;
-  ds.long_output = svc->long_plugin_output;
-  ds.perf_data = svc->perf_data;
+  ds.output = const_cast<char*>(svc->get_plugin_output().c_str());
+  ds.long_output = const_cast<char*>(svc->get_long_plugin_output().c_str());
+  ds.perf_data = const_cast<char*>(svc->get_perf_data().c_str());
 
   // Make callbacks.
   int return_code;
@@ -1624,7 +1623,7 @@ void broker_service_status(
        int type,
        int flags,
        int attr,
-       service* svc,
+       com::centreon::engine::service* svc,
        struct timeval const* timestamp) {
   // Config check.
   if (!(config->event_broker_options() & BROKER_STATUS_DATA))
@@ -1675,23 +1674,23 @@ void broker_statechange_data(
   // Fill struct with relevant data.
   nebstruct_statechange_data ds;
   host* temp_host(NULL);
-  service* temp_service(NULL);
+  com::centreon::engine::service* temp_service(NULL);
   ds.type = type;
   ds.flags = flags;
   ds.attr = attr;
   ds.timestamp = get_broker_timestamp(timestamp);
   ds.statechange_type = statechange_type;
   if (statechange_type == SERVICE_STATECHANGE) {
-    temp_service = (service*)data;
-    ds.host_name = temp_service->host_name;
-    ds.service_description = temp_service->description;
-    ds.output = temp_service->plugin_output;
+    temp_service = (com::centreon::engine::service*)data;
+    ds.host_name = const_cast<char*>(temp_service->get_hostname().c_str());
+    ds.service_description = const_cast<char*>(temp_service->get_description().c_str());
+    ds.output = const_cast<char*>(temp_service->get_plugin_output().c_str());
   }
   else {
     temp_host = (host*)data;
-    ds.host_name = temp_host->name;
+    ds.host_name = const_cast<char *>(temp_host->get_name().c_str());
     ds.service_description = NULL;
-    ds.output = temp_host->plugin_output;
+    ds.output = const_cast<char *>(temp_host->get_plugin_output().c_str());
   }
   ds.object_ptr = data;
   ds.state = state;
@@ -1772,7 +1771,7 @@ void broker_timed_event(
        int type,
        int flags,
        int attr,
-       timed_event* event,
+       com::centreon::engine::timed_event* event,
        struct timeval const* timestamp) {
   // Config check.
   if (!(config->event_broker_options() & BROKER_TIMED_EVENTS))

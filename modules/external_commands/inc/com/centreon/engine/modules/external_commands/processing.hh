@@ -1,5 +1,5 @@
 /*
-** Copyright 2011-2013,2015 Merethis
+** Copyright 2011-2019 Centreon
 **
 ** This file is part of Centreon Engine.
 **
@@ -23,19 +23,16 @@
 #  include <cstring>
 #  include <map>
 #  include <string>
+#  include <unordered_map>
 #  include "com/centreon/concurrency/mutex.hh"
+#  include "com/centreon/engine/configuration/applier/state.hh"
+#  include "com/centreon/engine/contact.hh"
 #  include "com/centreon/engine/namespace.hh"
-#  include "com/centreon/engine/objects/contact.hh"
-#  include "com/centreon/engine/objects/contactsmember.hh"
-#  include "com/centreon/engine/objects/contactgroup.hh"
-#  include "com/centreon/engine/objects/host.hh"
-#  include "com/centreon/engine/objects/hostsmember.hh"
-#  include "com/centreon/engine/objects/hostgroup.hh"
-#  include "com/centreon/engine/objects/service.hh"
-#  include "com/centreon/engine/objects/servicesmember.hh"
-#  include "com/centreon/engine/objects/servicegroup.hh"
-#  include "com/centreon/unordered_hash.hh"
-#  include "find.hh"
+#  include "com/centreon/engine/contactgroup.hh"
+#  include "com/centreon/engine/host.hh"
+#  include "com/centreon/engine/hostgroup.hh"
+#  include "com/centreon/engine/service.hh"
+#  include "com/centreon/engine/servicegroup.hh"
 
 CCE_BEGIN()
 
@@ -45,7 +42,7 @@ namespace         modules {
     public:
                   processing();
                   ~processing() throw ();
-      bool        execute(char const* cmd) const;
+      bool        execute(std::string const& cmd) const;
       bool        is_thread_safe(char const* cmd) const;
 
     private:
@@ -86,11 +83,9 @@ namespace         modules {
       static void _wrapper_enable_passive_service_checks(host* hst);
       static void _wrapper_disable_passive_service_checks(host* hst);
       static void _wrapper_set_service_notification_number(
-                    service* svc,
-                    char* args);
+                     service* svc, char* args);
       static void _wrapper_send_custom_service_notification(
-                    service* svc,
-                    char* args);
+                     service* svc, char* args);
 
       template <void (*fptr)()>
       static void _redirector(
@@ -149,7 +144,12 @@ namespace         modules {
         (void)entry_time;
 
         char* name(my_strtok(args, ";"));
-        host* hst(::find_host(name));
+
+        host* hst{nullptr};
+        host_map::const_iterator it(host::hosts.find(name));
+        if (it != host::hosts.end())
+          hst = it->second.get();
+
         if (!hst)
           return ;
         (*fptr)(hst);
@@ -164,7 +164,12 @@ namespace         modules {
         (void)entry_time;
 
         char* name(my_strtok(args, ";"));
-        host* hst(::find_host(name));
+
+        host* hst{nullptr};
+        host_map::const_iterator it(host::hosts.find(name));
+        if (it != host::hosts.end())
+          hst = it->second.get();
+
         if (!hst)
           return ;
         (*fptr)(hst, args + strlen(name) + 1);
@@ -179,31 +184,41 @@ namespace         modules {
         (void)entry_time;
 
         char* group_name(my_strtok(args, ";"));
-        hostgroup* group(::find_hostgroup(group_name));
+
+        hostgroup* group(nullptr);
+        hostgroup_map::const_iterator
+          it{hostgroup::hostgroups.find(group_name)};
+        if (it != hostgroup::hostgroups.end())
+          group = it->second.get();
         if (!group)
           return ;
 
-        for (hostsmember* member = group->members;
-             member != NULL;
-             member = member->next)
-          if (member->host_ptr)
-            (*fptr)(member->host_ptr);
+        for (host_map_unsafe::iterator
+               it(group->members.begin()),
+               end(group->members.begin());
+             it != end;
+             ++it)
+          if (it->second)
+            (*fptr)(it->second);
       }
 
       template <void (*fptr)(service*)>
       static void _redirector_service(
-                    int id,
-                    time_t entry_time,
-                    char* args) {
+        int id,
+        time_t entry_time,
+        char* args) {
         (void)id;
         (void)entry_time;
 
         char* name(my_strtok(args, ";"));
         char* description(my_strtok(NULL, ";"));
-        service* svc(::find_service(name, description));
-        if (!svc)
+
+        service_map::const_iterator found(service::services.find(
+          {name, description}));
+
+        if (found == service::services.end() || !found->second)
           return ;
-        (*fptr)(svc);
+        (*fptr)(found->second.get());
       }
 
       template <void (*fptr)(service*, char*)>
@@ -214,12 +229,14 @@ namespace         modules {
         (void)id;
         (void)entry_time;
 
-        char* name(my_strtok(args, ";"));
-        char* description(my_strtok(NULL, ";"));
-        service* svc(::find_service(name, description));
-        if (!svc)
+        char* name{my_strtok(args, ";")};
+        char* description{my_strtok(NULL, ";")};
+        service_map::const_iterator
+          found{service::services.find({name, description})};
+
+        if (found == service::services.end() || !found->second)
           return ;
-        (*fptr)(svc, args + strlen(name) + strlen(description) + 2);
+        (*fptr)(found->second.get(), args + strlen(name) + strlen(description) + 2);
       }
 
       template <void (*fptr)(service*)>
@@ -231,15 +248,18 @@ namespace         modules {
         (void)entry_time;
 
         char* group_name(my_strtok(args, ";"));
-        servicegroup* group(::find_servicegroup(group_name));
-        if (!group)
+        servicegroup_map::const_iterator sg_it{servicegroup::servicegroups.find(group_name)};
+        if (sg_it == servicegroup::servicegroups.end() ||
+          !sg_it->second)
           return ;
 
-        for (servicesmember* member = group->members;
-             member != NULL;
-             member = member->next)
-          if (member->service_ptr)
-            (*fptr)(member->service_ptr);
+        for (service_map_unsafe::iterator
+               it2(sg_it->second->members.begin()),
+               end2(sg_it->second->members.end());
+             it2 != end2;
+             ++it2)
+          if (it2->second)
+            (*fptr)(it2->second);
       }
 
       template <void (*fptr)(host*)>
@@ -251,17 +271,24 @@ namespace         modules {
         (void)entry_time;
 
         char* group_name(my_strtok(args, ";"));
-        servicegroup* group(::find_servicegroup(group_name));
-        if (!group)
+        servicegroup_map::const_iterator sg_it{servicegroup::servicegroups.find(group_name)};
+        if (sg_it == servicegroup::servicegroups.end() || !sg_it->second)
           return ;
 
-        host* last_host(NULL);
-        for (servicesmember* member = group->members;
-             member != NULL;
-             member = member->next) {
-          host* hst(::find_host(member->host_name));
+        host* last_host{nullptr};
+        for (service_map_unsafe::iterator
+               it2(sg_it->second->members.begin()),
+               end2(sg_it->second->members.end());
+             it2 != end2;
+             ++it2) {
+          host* hst{nullptr};
+          host_map::const_iterator
+              found(host::hosts.find(it2->first.first));
+          if (found != host::hosts.end())
+            hst = found->second.get();
+
           if (!hst || hst == last_host)
-            continue ;
+            continue;
           (*fptr)(hst);
           last_host = hst;
         }
@@ -276,10 +303,10 @@ namespace         modules {
         (void)entry_time;
 
         char* name(my_strtok(args, ";"));
-        contact* cntc(::find_contact(name));
-        if (!cntc)
+        contact_map::const_iterator ct_it{contact::contacts.find(name)};
+        if (ct_it == contact::contacts.end())
           return ;
-        (*fptr)(cntc);
+        (*fptr)(ct_it->second.get());
       }
 
       template <void (*fptr)(contact*)>
@@ -291,18 +318,19 @@ namespace         modules {
         (void)entry_time;
 
         char* group_name(my_strtok(args, ";"));
-        contactgroup* group(::find_contactgroup(group_name));
-        if (!group)
+        contactgroup_map::iterator it_cg{contactgroup::contactgroups.find(group_name)};
+        if (it_cg == contactgroup::contactgroups.end() || !it_cg->second)
           return ;
 
-        for (contactsmember* member(group->members);
-             member;
-             member = member->next)
-          if (member->contact_ptr)
-            (*fptr)(member->contact_ptr);
+        for (contact_map_unsafe::const_iterator
+               it(it_cg->second->get_members().begin()),
+               end(it_cg->second->get_members().end());
+             it != end; ++it)
+          if (it->second)
+            (*fptr)(it->second);
       }
 
-      umap<std::string, command_info> _lst_command;
+      std::unordered_map<std::string, command_info> _lst_command;
       mutable concurrency::mutex      _mutex;
     };
   }

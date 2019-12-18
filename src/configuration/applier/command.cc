@@ -23,9 +23,7 @@
 #include "com/centreon/engine/commands/connector.hh"
 #include "com/centreon/engine/commands/forward.hh"
 #include "com/centreon/engine/commands/raw.hh"
-#include "com/centreon/engine/commands/set.hh"
 #include "com/centreon/engine/configuration/applier/command.hh"
-#include "com/centreon/engine/configuration/applier/object.hh"
 #include "com/centreon/engine/configuration/applier/state.hh"
 #include "com/centreon/engine/error.hh"
 #include "com/centreon/engine/globals.hh"
@@ -40,31 +38,9 @@ using namespace com::centreon::engine::configuration;
 applier::command::command() {}
 
 /**
- *  Copy constructor.
- *
- *  @param[in] right Object to copy.
- */
-applier::command::command(applier::command const& right) {
-  (void)right;
-}
-
-/**
  *  Destructor.
  */
 applier::command::~command() throw () {}
-
-/**
- *  Assignment operator.
- *
- *  @param[in] right Object to copy.
- *
- *  @return This object.
- */
-applier::command& applier::command::operator=(
-                                      applier::command const& right) {
-  (void)right;
-  return (*this);
-}
 
 /**
  *  Add new command.
@@ -79,18 +55,23 @@ void applier::command::add_object(configuration::command const& obj) {
   // Add command to the global configuration set.
   config->commands().insert(obj);
 
-  // Create compatibility command.
-  command_struct* c(add_command(
-                      obj.command_name().c_str(),
-                      obj.command_line().c_str()));
-  if (!c)
-    throw (engine_error() << "Could not register command '"
-           << obj.command_name() << "'");
-
-  // Create real command object.
-  _create_command(obj);
-
-  return ;
+  if (obj.connector().empty()) {
+    std::shared_ptr<commands::raw> raw{
+      new commands::raw(obj.command_name(), obj.command_line(), &checks::checker::instance())};
+    commands::command::commands[raw->get_name()] = raw;
+  }
+  else {
+    connector_map::iterator found_con{commands::connector::connectors.find(obj.connector())};
+    if (found_con != commands::connector::connectors.end() && found_con->second) {
+      std::shared_ptr<commands::forward> forward{
+        new commands::forward(obj.command_name(), obj.command_line(), *found_con->second)};
+      commands::command::commands[forward->get_name()] = forward;
+    }
+    else
+      throw engine_error() << "Could not register command '"
+                           << obj.command_name() << "': unable to find '"
+                           << obj.connector() << "'";
+  }
 }
 
 /**
@@ -103,7 +84,6 @@ void applier::command::add_object(configuration::command const& obj) {
  */
 void applier::command::expand_objects(configuration::state& s) {
   (void)s;
-  return ;
 }
 
 /**
@@ -124,27 +104,43 @@ void applier::command::modify_object(
            << "command '" << obj.command_name() << "'");
 
   // Find command object.
-  umap<std::string, shared_ptr<command_struct> >::iterator
-    it_obj(applier::state::instance().commands_find(obj.key()));
-  if (it_obj == applier::state::instance().commands().end())
+  command_map::iterator
+    it_obj(commands::command::commands.find(obj.key()));
+  if (it_obj == commands::command::commands.end())
     throw (engine_error() << "Could not modify non-existing "
            << "command object '" << obj.command_name() << "'");
-  command_struct* c(it_obj->second.get());
+  commands::command* c(it_obj->second.get());
 
   // Update the global configuration set.
   config->commands().erase(it_cfg);
   config->commands().insert(obj);
 
   // Modify command.
-  modify_if_different(c->command_line, obj.command_line().c_str());
+  if (c->get_command_line() != obj.command_line())
+    c->set_command_line(obj.command_line());
 
   // Command will be temporarily removed from the command set but
   // will be added back right after with _create_command. This does
   // not create dangling pointers since commands::command object are
   // not referenced anywhere, only ::command objects are.
-  commands::set::instance().remove_command(obj.command_name());
-  _create_command(obj);
-
+  commands::command::commands.erase(obj.command_name());
+  if (obj.connector().empty()) {
+    std::shared_ptr<commands::raw> raw{
+      new commands::raw(obj.command_name(), obj.command_line(), &checks::checker::instance())};
+    commands::command::commands[raw->get_name()] = raw;
+  }
+  else {
+    connector_map::iterator found_con{commands::connector::connectors.find(obj.connector())};
+    if (found_con != commands::connector::connectors.end() && found_con->second) {
+      std::shared_ptr<commands::forward> forward{
+        new commands::forward(obj.command_name(), obj.command_line(), *found_con->second)};
+      commands::command::commands[forward->get_name()] = forward;
+    }
+    else
+      throw engine_error() << "Could not register command '"
+                           << obj.command_name() << "': unable to find '"
+                           << obj.connector() << "'";
+  }
   // Notify event broker.
   timeval tv(get_broker_timestamp(NULL));
   broker_command_data(
@@ -153,8 +149,6 @@ void applier::command::modify_object(
     NEBATTR_NONE,
     c,
     &tv);
-
-  return ;
 }
 
 /**
@@ -169,13 +163,10 @@ void applier::command::remove_object(
     << "Removing command '" << obj.command_name() << "'.";
 
   // Find command.
-  umap<std::string, shared_ptr<command_struct> >::iterator
-    it(applier::state::instance().commands_find(obj.key()));
-  if (it != applier::state::instance().commands().end()) {
-    command_struct* cmd(it->second.get());
-
-    // Remove command from its list.
-    unregister_object<command_struct>(&command_list, cmd);
+  std::unordered_map<std::string, std::shared_ptr<commands::command> >::iterator
+    it(commands::command::commands.find(obj.key()));
+  if (it != commands::command::commands.end()) {
+    commands::command* cmd(it->second.get());
 
     // Notify event broker.
     timeval tv(get_broker_timestamp(NULL));
@@ -187,16 +178,14 @@ void applier::command::remove_object(
       &tv);
 
     // Erase command (will effectively delete the object).
-    applier::state::instance().commands().erase(it);
+    commands::command::commands.erase(it);
   }
-
-  // Remove command objects.
-  commands::set::instance().remove_command(obj.command_name());
+  else
+    throw engine_error() << "Could not remove command '"
+        << obj.key() << "': it does not exist";
 
   // Remove command from the global configuration set.
   config->commands().erase(obj);
-
-  return ;
 }
 
 /**
@@ -209,42 +198,10 @@ void applier::command::remove_object(
  */
 void applier::command::resolve_object(
                          configuration::command const& obj) {
-  if (!obj.connector().empty())
-    commands::set::instance().get_command(obj.connector());
-  return ;
-}
-
-/**
- *  @brief Find real command object.
- *
- *  Create the commands::command object. This can be either a
- *  commands::raw object or a commands::forward object.
- *
- *  @param[in] obj  Command configuration object.
- */
-void applier::command::_create_command(
-                         configuration::command const& obj) {
-  // Command set.
-  commands::set& cmd_set(commands::set::instance());
-
-  // Raw command.
-  if (obj.connector().empty()) {
-    shared_ptr<commands::command>
-      cmd(new commands::raw(
-                          obj.command_name(),
-                          obj.command_line(),
-                          &checks::checker::instance()));
-    cmd_set.add_command(cmd);
+  if (!obj.connector().empty()) {
+    connector_map::iterator found{
+      commands::connector::connectors.find(obj.connector())};
+    if(found == commands::connector::connectors.end() || !found->second)
+      throw (engine_error() << "unknow command " << obj.connector());
   }
-  // Connector command.
-  else {
-    shared_ptr<commands::command>
-      cmd(new commands::forward(
-                          obj.command_name(),
-                          obj.command_line(),
-                          *cmd_set.get_command(obj.connector())));
-    cmd_set.add_command(cmd);
-  }
-
-  return ;
 }

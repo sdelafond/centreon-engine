@@ -21,7 +21,6 @@
 #  define CCE_CONFIGURATION_APPLIER_SERVICE_HH
 
 #  include "com/centreon/engine/namespace.hh"
-#  include "com/centreon/shared_ptr.hh"
 
 CCE_BEGIN()
 
@@ -35,7 +34,7 @@ namespace             configuration {
      public:
                       service();
                       service(service const& right);
-                      ~service() throw ();
+                      ~service();
       service&        operator=(service const& right);
       void            add_object(
                         configuration::service const& obj);

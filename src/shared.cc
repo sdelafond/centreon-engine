@@ -18,6 +18,7 @@
 ** <http://www.gnu.org/licenses/>.
 */
 
+#include <random>
 #include "com/centreon/unique_array_ptr.hh"
 #include "com/centreon/engine/common.hh"
 #include "com/centreon/engine/globals.hh"
@@ -55,59 +56,19 @@ char* my_strtok(char const* buffer, char const* tokens) {
 
   sequence_head = my_strtok_buffer;
 
-  if (sequence_head[0] == '\x0')
-    return (NULL);
+  if (!sequence_head || sequence_head[0] == '\x0')
+    return nullptr;
 
   token_position = strchr(my_strtok_buffer, tokens[0]);
 
   if (token_position == NULL) {
     my_strtok_buffer = strchr(my_strtok_buffer, '\x0');
-    return (sequence_head);
+    return sequence_head;
   }
 
   token_position[0] = '\x0';
   my_strtok_buffer = token_position + 1;
-  return (sequence_head);
-}
-
-/* fixes compiler problems under Solaris, since strsep() isn't included */
-/* this code is taken from the glibc source */
-char* my_strsep(char** stringp, char const* delim) {
-  char* begin;
-  char* end;
-
-  if ((begin = *stringp) == NULL)
-    return (NULL);
-
-  /* A frequent case is when the delimiter string contains only one
-   * character.  Here we don't need to call the expensive `strpbrk'
-   * function and instead work using `strchr'.  */
-  if (delim[0] == '\0' || delim[1] == '\0') {
-    char ch = delim[0];
-
-    if (ch == '\0' || begin[0] == '\0')
-      end = NULL;
-    else {
-      if (*begin == ch)
-        end = begin;
-      else
-        end = strchr(begin + 1, ch);
-    }
-  }
-  else {
-    /* find the end of the token.  */
-    end = strpbrk(begin, delim);
-  }
-
-  if (end) {
-    /* terminate the token and set *STRINGP past NUL character.  */
-    *end++ = '\0';
-    *stringp = end;
-  }
-  else
-    /* no more delimiters; this is the last token.  */
-    *stringp = NULL;
-  return (begin);
+  return sequence_head;
 }
 
 /* strip newline, carriage return, and tab characters from beginning and end of a string */
@@ -167,22 +128,6 @@ void strip(char* buffer) {
 /**************************************************
  *************** HASH FUNCTIONS *******************
  **************************************************/
-
-/* dual hash function */
-int hashfunc(char const* name1, char const* name2, int hashslots) {
-  unsigned int result(0);
-
-  if (name1)
-    for (unsigned int i(0), end(strlen(name1)); i < end; ++i)
-      result += name1[i];
-
-  if (name2)
-    for (unsigned int i(0), end(strlen(name2)); i < end; ++i)
-      result += name2[i];
-
-  return (result % hashslots);
-}
-
 /* dual hash data comparison */
 int compare_hashdata(
       char const* val1a,
@@ -215,7 +160,7 @@ int compare_hashdata(
       result = strcmp(val1b, val2b);
   }
 
-  return (result);
+  return result;
 }
 
 /*
@@ -388,18 +333,95 @@ void get_time_breakdown(
   *hours = temp_hours;
   *minutes = temp_minutes;
   *seconds = temp_seconds;
-  return;
 }
 
 char* resize_string(char* str, size_t size) {
   if (size == 0) {
     delete[] str;
-    return (NULL);
+    return nullptr;
   }
-  if (str == NULL)
-    return (new char[size]);
+  if (str == nullptr)
+    return new char[size];
   char* new_str = new char[size];
-  strcpy(new_str, str);
+  strncpy(new_str, str, size - 2);
+  new_str[size - 1] = 0;
   delete[] str;
-  return (new_str);
+  return new_str;
+}
+
+Uuid::Uuid() {
+  std::random_device rd;
+
+  std::uniform_int_distribution<uint32_t> dist32(0, UINT32_MAX);
+  std::uniform_int_distribution<uint16_t> dist16(0, UINT16_MAX);
+  std::uniform_int_distribution<uint8_t> dist8(0, UINT8_MAX);
+
+
+  _time_low = dist32(rd);
+  _time_mid = dist16(rd);
+  _time_hi_and_version = dist16(rd);
+  _clock_seq_hi_and_reserved = dist8(rd);
+  _clock_seq_low = dist8(rd);
+  for (int i = 0; i < 6; ++i)
+    _node[i] = dist8(rd);
+
+  _clock_seq_hi_and_reserved &= ~(1 << 6);
+  _clock_seq_hi_and_reserved |= (1 << 7);
+  _time_hi_and_version &= ~(1 << 12);
+  _time_hi_and_version &= ~(1 << 13);
+  _time_hi_and_version |= (1 << 14);
+}
+
+Uuid::Uuid(Uuid const& uuid) {
+  operator=(uuid);
+}
+
+Uuid const& Uuid::operator=(Uuid const& uuid) {
+  if (this != &uuid) {
+    _time_low = uuid._time_low;
+    _time_mid = uuid._time_mid;
+    _time_hi_and_version = uuid._time_hi_and_version;
+    _clock_seq_hi_and_reserved = uuid._clock_seq_hi_and_reserved;
+    _clock_seq_low = uuid._clock_seq_low;
+
+    memcpy(&_node, uuid._node, sizeof(_node));
+  }
+  return *this;
+}
+
+#define DIFF_RETURN(a, b, field)	do {  \
+	if ((a).field != (b).field)		        \
+		return false;	                      \
+} while (0)
+
+bool Uuid::operator==(Uuid const& uuid) const {
+  int res;
+
+  /* Deal with NULL or equal pointers. */
+  /* We have to compare the hard way. */
+  DIFF_RETURN(*this, uuid, _time_low);
+  DIFF_RETURN(*this, uuid, _time_mid);
+  DIFF_RETURN(*this, uuid, _time_hi_and_version);
+  DIFF_RETURN(*this, uuid, _clock_seq_hi_and_reserved);
+  DIFF_RETURN(*this, uuid, _clock_seq_low);
+
+  res = memcmp(_node, uuid._node, sizeof(_node));
+  if (res)
+    return false;
+  return true;
+}
+
+std::string Uuid::to_string() const {
+  std::string uuid("", 37);
+  int c;
+
+  c = snprintf(&uuid[0], 37, "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+               _time_low, _time_mid, _time_hi_and_version,
+               _clock_seq_hi_and_reserved, _clock_seq_low, _node[0],
+               _node[1], _node[2], _node[3], _node[4], _node[5]);
+
+  if (c < 0)
+    return std::string();
+
+  return uuid;
 }

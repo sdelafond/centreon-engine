@@ -17,8 +17,12 @@
 ** <http://www.gnu.org/licenses/>.
 */
 
+#include <memory>
 #include "com/centreon/concurrency/locker.hh"
 #include "com/centreon/engine/commands/command.hh"
+#include "com/centreon/engine/configuration/applier/state.hh"
+#include "com/centreon/engine/error.hh"
+#include "com/centreon/engine/logging/logger.hh"
 #include "com/centreon/engine/macros/grab.hh"
 
 using namespace com::centreon;
@@ -26,6 +30,8 @@ using namespace com::centreon::engine;
 
 static concurrency::mutex _lock_id;
 static unsigned long      _id = 0;
+
+command_map commands::command::commands;
 
 /**
  *  Default constructor
@@ -41,15 +47,15 @@ commands::command::command(
   : _command_line(command_line),
     _listener(listener),
     _name(name) {
-
+  if (_name.empty())
+    throw (engine_error()
+      << "Could not create a command with an empty name");
 }
 
 /**
  *  Destructor.
  */
-commands::command::~command() throw () {
-
-}
+commands::command::~command() throw () {}
 
 /**
  *  Compare two result.
@@ -59,7 +65,7 @@ commands::command::~command() throw () {
  *  @return True if object have the same value.
  */
 bool commands::command::operator==(command const& right) const throw() {
-  return (_name == right._name && _command_line == right._command_line);
+  return _name == right._name && _command_line == right._command_line;
 }
 
 /**
@@ -70,7 +76,7 @@ bool commands::command::operator==(command const& right) const throw() {
  *  @return True if object have the different value.
  */
 bool commands::command::operator!=(command const& right) const throw() {
-  return (!operator==(right));
+  return !operator==(right);
 }
 
 /**
@@ -79,16 +85,7 @@ bool commands::command::operator!=(command const& right) const throw() {
  *  @return The command line.
  */
 std::string const& commands::command::get_command_line() const throw() {
-  return (_command_line);
-}
-
-/**
- *  Get the command listener.
- *
- *  @return The listener who catch events.
- */
-commands::command_listener* commands::command::get_listener() const throw() {
-  return (_listener);
+  return _command_line;
 }
 
 /**
@@ -97,7 +94,7 @@ commands::command_listener* commands::command::get_listener() const throw() {
  *  @return The command name.
  */
 std::string const& commands::command::get_name() const throw() {
-  return (_name);
+  return _name;
 }
 
 /**
@@ -144,7 +141,7 @@ commands::command& commands::command::operator=(commands::command const& right) 
     _listener = right._listener;
     _name = right._name;
   }
-  return (*this);
+  return *this;
 }
 
 /**
@@ -155,11 +152,9 @@ commands::command& commands::command::operator=(commands::command const& right) 
  *  @return The processed command line.
  */
 std::string commands::command::process_cmd(nagios_macros* macros) const {
-  char* command_line = NULL;
-  process_macros_r(macros, _command_line.c_str(), &command_line, 0);
-  std::string processed_cmd(command_line);
-  delete[] command_line;
-  return (processed_cmd);
+  std::string command_line;
+  process_macros_r(macros, _command_line, command_line, 0);
+  return command_line;
 }
 
 /**
@@ -169,5 +164,5 @@ std::string commands::command::process_cmd(nagios_macros* macros) const {
  */
 unsigned long commands::command::get_uniq_id() {
   concurrency::locker locker(&_lock_id);
-  return (++_id);
+  return ++_id;
 }

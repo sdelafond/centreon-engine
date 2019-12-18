@@ -39,12 +39,12 @@
 #include "com/centreon/engine/broker/compatibility.hh"
 #include "com/centreon/engine/broker/loader.hh"
 #include "com/centreon/engine/checks/checker.hh"
-#include "com/centreon/engine/commands/set.hh"
 #include "com/centreon/engine/config.hh"
 #include "com/centreon/engine/configuration/applier/state.hh"
 #include "com/centreon/engine/configuration/parser.hh"
 #include "com/centreon/engine/configuration/state.hh"
 #include "com/centreon/engine/diagnostic.hh"
+#include "com/centreon/engine/downtimes/downtime_manager.hh"
 #include "com/centreon/engine/error.hh"
 #include "com/centreon/engine/events/loop.hh"
 #include "com/centreon/engine/globals.hh"
@@ -53,10 +53,7 @@
 #include "com/centreon/engine/logging/logger.hh"
 #include "com/centreon/engine/macros/misc.hh"
 #include "com/centreon/engine/nebmods.hh"
-#include "com/centreon/engine/notifications.hh"
-#include "com/centreon/engine/objects/comment.hh"
-#include "com/centreon/engine/objects/downtime.hh"
-#include "com/centreon/engine/perfdata.hh"
+#include "com/centreon/engine/downtimes/downtime.hh"
 #include "com/centreon/engine/retention/dump.hh"
 #include "com/centreon/engine/retention/parser.hh"
 #include "com/centreon/engine/retention/state.hh"
@@ -67,7 +64,6 @@
 #include "com/centreon/engine/version.hh"
 #include "com/centreon/io/directory_entry.hh"
 #include "com/centreon/logging/engine.hh"
-#include "com/centreon/shared_ptr.hh"
 
 using namespace com::centreon::engine;
 
@@ -112,7 +108,6 @@ int main(int argc, char* argv[]) {
   com::centreon::logging::engine::load();
   config = new configuration::state;
   com::centreon::engine::timezone_manager::load();
-  com::centreon::engine::commands::set::load();
   com::centreon::engine::configuration::applier::state::load();
   com::centreon::engine::checks::checker::load();
   com::centreon::engine::events::loop::load();
@@ -250,24 +245,22 @@ int main(int argc, char* argv[]) {
           p.parse(config_file, config);
         }
 
-        configuration::applier::state&
-          applier(configuration::applier::state::instance());
-        applier.apply(config);
+        configuration::applier::state::instance().apply(config);
 
         logger(logging::log_info_message, logging::basic)
           << "\n"
-          << "Checked " << applier.commands().size() << " commands.\n"
-          << "Checked " << applier.connectors().size() << " connectors.\n"
-          << "Checked " << applier.contacts().size() << " contacts.\n"
-          << "Checked " << applier.hostdependencies().size() << " host dependencies.\n"
-          << "Checked " << applier.hostescalations().size() << " host escalations.\n"
-          << "Checked " << applier.hostgroups().size() << " host groups.\n"
-          << "Checked " << applier.hosts().size() << " hosts.\n"
-          << "Checked " << applier.servicedependencies().size() << " service dependencies.\n"
-          << "Checked " << applier.serviceescalations().size() << " service escalations.\n"
-          << "Checked " << applier.servicegroups().size() << " service groups.\n"
-          << "Checked " << applier.services().size() << " services.\n"
-          << "Checked " << applier.timeperiods().size() << " time periods.\n"
+          << "Checked " << commands::command::commands.size() << " commands.\n"
+          << "Checked " << commands::connector::connectors.size() << " connectors.\n"
+          << "Checked " << contact::contacts.size() << " contacts.\n"
+          << "Checked " << hostdependency::hostdependencies.size() << " host dependencies.\n"
+          << "Checked " << hostescalation::hostescalations.size() << " host escalations.\n"
+          << "Checked " << hostgroup::hostgroups.size() << " host groups.\n"
+          << "Checked " << host::hosts.size() << " hosts.\n"
+          << "Checked " << servicedependency::servicedependencies.size() << " service dependencies.\n"
+          << "Checked " << serviceescalation::serviceescalations.size() << " service escalations.\n"
+          << "Checked " << servicegroup::servicegroups.size() << " service groups.\n"
+          << "Checked " << service::services.size() << " services.\n"
+          << "Checked " << timeperiod::timeperiods.size() << " time periods.\n"
           << "\n"
           << "Total Warnings: " << config_warnings << "\n"
           << "Total Errors:   " << config_errors;
@@ -347,8 +340,8 @@ int main(int argc, char* argv[]) {
         // Get program (re)start time and save as macro. Needs to be
         // done after we read config files, as user may have overridden
         // timezone offset.
-        program_start = time(NULL);
-        string::setstr(mac->x[MACRO_PROCESSSTARTTIME], program_start);
+        program_start = std::time(nullptr);
+        mac->x[MACRO_PROCESSSTARTTIME] = program_start;
 
         // Load broker modules.
         for (std::list<std::string>::const_iterator
@@ -379,11 +372,8 @@ int main(int argc, char* argv[]) {
         // Initialize status data.
         initialize_status_data();
 
-        // Initialize comment data.
-        initialize_comment_data();
-
         // Initialize scheduled downtime data.
-        initialize_downtime_data();
+        downtimes::downtime_manager::instance().initialize_downtime_data();
 
         // Initialize check statistics.
         init_check_stats();
@@ -400,7 +390,7 @@ int main(int argc, char* argv[]) {
 
         // Get event start time and save as macro.
         event_start = time(NULL);
-        string::setstr(mac->x[MACRO_EVENTSTARTTIME], event_start);
+        mac->x[MACRO_EVENTSTARTTIME] = event_start;
 
         logger(logging::log_info_message, logging::basic)
           << "Event loop start at " << string::ctime(event_start);
@@ -468,13 +458,12 @@ int main(int argc, char* argv[]) {
   com::centreon::engine::broker::compatibility::unload();
   com::centreon::engine::broker::loader::unload();
   com::centreon::engine::configuration::applier::state::unload();
-  com::centreon::engine::commands::set::unload();
   com::centreon::engine::checks::checker::unload();
   delete config;
-  config = NULL;
+  config = nullptr;
   com::centreon::engine::timezone_manager::unload();
   com::centreon::logging::engine::unload();
   com::centreon::clib::unload();
 
-  return (retval);
+  return retval;
 }

@@ -35,6 +35,8 @@ using namespace com::centreon::engine::commands;
 *                                     *
 **************************************/
 
+connector_map connector::connectors;
+
 /**
  *  Constructor.
  *
@@ -79,23 +81,11 @@ connector::connector(connector const& right)
 /**
  *  Destructor.
  */
-connector::~connector() throw() {
+connector::~connector() noexcept {
   // Wait restart thread.
   _restart.wait();
   // Close connector properly.
   _connector_close();
-}
-
-/**
- *  Assignment operator.
- *
- *  @param[in] right Object to copy.
- *
- *  @return This object.
- */
-connector& connector::operator=(connector const& right) {
-  _internal_copy(right);
-  return (*this);
 }
 
 /**
@@ -104,7 +94,7 @@ connector& connector::operator=(connector const& right) {
  *  @return Return a pointer on a copy object.
  */
 com::centreon::engine::commands::command* connector::clone() const {
-  return (new connector(*this));
+  return new connector(*this);
 }
 
 /**
@@ -128,7 +118,7 @@ unsigned long connector::run(
 
   // Set query informations.
   unsigned long command_id(get_uniq_id());
-  shared_ptr<query_info> info(new query_info);
+  std::shared_ptr<query_info> info(new query_info);
   info->processed_cmd = processed_cmd;
   info->start_time = timestamp::now();
   info->timeout = timeout;
@@ -174,7 +164,7 @@ unsigned long connector::run(
       << "connector::run: start command failed: id=" << command_id;
     throw;
   }
-  return (command_id);
+  return command_id;
 }
 
 /**
@@ -198,7 +188,7 @@ void connector::run(
 
   // Set query informations.
   unsigned long command_id(get_uniq_id());
-  shared_ptr<query_info> info(new query_info);
+  std::shared_ptr<query_info> info(new query_info);
   info->processed_cmd = processed_cmd;
   info->start_time = timestamp::now();
   info->timeout = timeout;
@@ -242,7 +232,7 @@ void connector::run(
   // Waiting result.
   concurrency::locker lock(&_lock);
   while (true) {
-    umap<unsigned long, result>::iterator
+    std::unordered_map<unsigned long, result>::iterator
       it(_results.find(command_id));
     if (it != _results.end()) {
       res = it->second;
@@ -251,7 +241,6 @@ void connector::run(
     }
     _cv_query.wait(&_lock);
   }
-  return;
 }
 
 /**
@@ -281,14 +270,14 @@ void connector::set_command_line(std::string const& command_line) {
 void connector::data_is_available(process& p) throw () {
   typedef void (connector::*recv_query)(char const*);
   static recv_query tab_recv_query[] = {
-    NULL,
+    nullptr,
     &connector::_recv_query_version,
-    NULL,
+    nullptr,
     &connector::_recv_query_execute,
-    NULL,
+    nullptr,
     &connector::_recv_query_quit,
     &connector::_recv_query_error,
-    NULL
+    nullptr
   };
 
   try {
@@ -330,7 +319,7 @@ void connector::data_is_available(process& p) throw () {
          it != end;
          ++it) {
       char const* data(it->c_str());
-      char* endptr(NULL);
+      char* endptr(nullptr);
       unsigned int id(strtol(data, &endptr, 10));
       logger(dbg_commands, basic)
         << "connector::data_is_available: request id=" << id;
@@ -350,7 +339,6 @@ void connector::data_is_available(process& p) throw () {
     logger(log_runtime_warning, basic)
       << "Warning: Connector '" << _name << "' error: " << e.what();
   }
-  return;
 }
 
 /**
@@ -360,7 +348,6 @@ void connector::data_is_available(process& p) throw () {
  */
 void connector::data_is_available_err(process& p) throw () {
   (void)p;
-  return;
 }
 
 /**
@@ -397,7 +384,6 @@ void connector::finished(process& p) throw () {
       << "Error: Connector '" << _name
       << "' termination routine failed: " << e.what();
   }
-  return;
 }
 
 /**
@@ -442,7 +428,6 @@ void connector::_connector_close() {
 
   // Waiting the end of the process.
   _process.wait();
-  return;
 }
 
 /**
@@ -496,12 +481,12 @@ void connector::_connector_start() {
       << _queries.size();
 
     // Resend commands.
-    for (umap<unsigned long, shared_ptr<query_info> >::iterator
+    for (std::unordered_map<unsigned long, std::shared_ptr<query_info> >::iterator
            it(_queries.begin()), end(_queries.end());
          it != end;
          ++it) {
       unsigned long command_id(it->first);
-      shared_ptr<query_info> info(it->second);
+      std::shared_ptr<query_info> info(it->second);
       _send_query_execute(
         info->processed_cmd,
         command_id,
@@ -509,7 +494,6 @@ void connector::_connector_start() {
         info->timeout);
     }
   }
-  return;
 }
 
 /**
@@ -528,7 +512,6 @@ void connector::_internal_copy(connector const& right) {
     _results.clear();
     _try_to_restart = true;
   }
-  return;
 }
 
 /**
@@ -538,7 +521,7 @@ void connector::_internal_copy(connector const& right) {
  */
 std::string const& connector::_query_ending() const throw () {
   static std::string ending(3, '\0');
-  return (ending);
+  return ending;
 }
 
 /**
@@ -551,7 +534,7 @@ void connector::_recv_query_error(char const* data) {
     logger(dbg_commands, basic)
       << "connector::_recv_query_error";
 
-    char* endptr(NULL);
+    char* endptr(nullptr);
     int code(strtol(data, &endptr, 10));
     if (data == endptr)
       throw (engine_error() << "Invalid query for connector '"
@@ -580,7 +563,6 @@ void connector::_recv_query_error(char const* data) {
     logger(log_runtime_warning, basic)
       << "Warning: Connector '" << _name << "': " << e.what();
   }
-  return;
 }
 
 /**
@@ -594,7 +576,7 @@ void connector::_recv_query_execute(char const* data) {
       << "connector::_recv_query_execute";
 
     // Get query informations.
-    char* endptr(NULL);
+    char* endptr(nullptr);
     unsigned long command_id(strtol(data, &endptr, 10));
     if (data == endptr)
       throw (engine_error()
@@ -615,12 +597,12 @@ void connector::_recv_query_execute(char const* data) {
     logger(dbg_commands, basic)
       << "connector::_recv_query_execute: id=" << command_id;
 
-    shared_ptr<query_info> info;
+    std::shared_ptr<query_info> info;
     {
       concurrency::locker lock(&_lock);
 
       // Get query information with the command_id.
-      umap<unsigned long, shared_ptr<query_info> >::iterator
+      std::unordered_map<unsigned long, std::shared_ptr<query_info> >::iterator
         it(_queries.find(command_id));
       if (it == _queries.end()) {
         logger(dbg_commands, basic)
@@ -638,7 +620,7 @@ void connector::_recv_query_execute(char const* data) {
     result res;
     res.command_id = command_id;
     res.end_time = timestamp::now();
-    res.exit_code = STATE_UNKNOWN;
+    res.exit_code = service::state_unknown;
     res.exit_status = process::normal;
     res.start_time = info->start_time;
 
@@ -653,7 +635,7 @@ void connector::_recv_query_execute(char const* data) {
     // The check result was properly returned.
     else {
       if (exit_code < 0 || exit_code > 3)
-        res.exit_code = STATE_UNKNOWN;
+        res.exit_code = service::state_unknown;
       else
         res.exit_code = exit_code;
       res.output = (is_executed ? std_out : std_err);
@@ -684,7 +666,6 @@ void connector::_recv_query_execute(char const* data) {
     logger(log_runtime_warning, basic)
       << "Warning: Connector '" << _name << "': " << e.what();
   }
-  return;
 }
 
 /**
@@ -700,7 +681,6 @@ void connector::_recv_query_quit(char const* data) {
   concurrency::locker lock(&_lock);
   _query_quit_ok = true;
   _cv_query.wake_all();
-  return;
 }
 
 /**
@@ -717,7 +697,7 @@ void connector::_recv_query_version(char const* data) {
     // Parse query version response to get major and minor
     // engine version supported by the connector.
     int version[2];
-    char* endptr(NULL);
+    char* endptr(nullptr);
     for (unsigned int i(0); i < 2; ++i) {
       version[i] = strtol(data, &endptr, 10);
       if (data == endptr)
@@ -744,7 +724,6 @@ void connector::_recv_query_version(char const* data) {
   concurrency::locker lock(&_lock);
   _query_version_ok = version_ok;
   _cv_query.wake_all();
-  return;
 }
 
 /**
@@ -757,7 +736,7 @@ void connector::_recv_query_version(char const* data) {
  */
 void connector::_send_query_execute(
                   std::string const& cmdline,
-                  unsigned int command_id,
+                  uint64_t command_id,
                   timestamp const& start,
                   unsigned int timeout) {
   logger(dbg_commands, basic)
@@ -775,7 +754,6 @@ void connector::_send_query_execute(
       << cmdline << '\0'
       << _query_ending();
   _process.write(oss.str());
-  return;
 }
 
 /**
@@ -787,7 +765,6 @@ void connector::_send_query_quit() {
 
   std::string query("4\0", 2);
   _process.write(query + _query_ending());
-  return;
 }
 
 /**
@@ -799,7 +776,6 @@ void connector::_send_query_version() {
 
   std::string query("0\0", 2);
   _process.write(query + _query_ending());
-  return;
 }
 
 /**
@@ -829,7 +805,7 @@ void connector::restart::_run() {
     logger(log_runtime_warning, basic)
       << "Warning: Connector '" << _c->_name << "': " << e.what();
 
-    umap<unsigned long, shared_ptr<query_info> > tmp_queries;
+    std::unordered_map<unsigned long, std::shared_ptr<query_info> > tmp_queries;
     {
       concurrency::locker lock(&_c->_lock);
       _c->_try_to_restart = false;
@@ -838,17 +814,17 @@ void connector::restart::_run() {
     }
 
     // Resend commands.
-    for (umap<unsigned long, shared_ptr<query_info> >::iterator
+    for (std::unordered_map<unsigned long, std::shared_ptr<query_info> >::iterator
            it(tmp_queries.begin()), end(tmp_queries.end());
          it != end;
          ++it) {
       unsigned long command_id(it->first);
-      shared_ptr<query_info> info(it->second);
+      std::shared_ptr<query_info> info(it->second);
 
       result res;
       res.command_id = command_id;
       res.end_time = timestamp::now();
-      res.exit_code = STATE_UNKNOWN;
+      res.exit_code = service::state_unknown;
       res.exit_status = process::normal;
       res.start_time = info->start_time;
       res.output = "(Failed to execute command with connector '"
@@ -876,7 +852,6 @@ void connector::restart::_run() {
       }
     }
   }
-  return;
 }
 
 /**
@@ -892,5 +867,5 @@ std::ostream& operator<<(std::ostream& os, connector const& obj) {
     "  name:         " << obj.get_name() << "\n"
     "  command_line: " << obj.get_command_line() << "\n"
     "}\n";
-  return (os);
+  return os;
 }

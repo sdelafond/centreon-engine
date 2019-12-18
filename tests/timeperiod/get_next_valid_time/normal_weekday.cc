@@ -19,14 +19,29 @@
 
 #include <cstring>
 #include <gtest/gtest.h>
-#include "com/centreon/engine/objects/timeperiod.hh"
+#include "com/centreon/clib.hh"
+#include "com/centreon/engine/configuration/applier/state.hh"
 #include "com/centreon/engine/timeperiod.hh"
 #include "tests/timeperiod/utils.hh"
 
+using namespace com::centreon;
 using namespace com::centreon::engine;
 
 class         GetNextValidTimeNormalWeekdayTest : public ::testing::Test {
  public:
+
+  void SetUp() override {
+    clib::load();
+    com::centreon::logging::engine::load();
+    configuration::applier::state::load();
+  }
+
+  void TearDown() override {
+    configuration::applier::state::unload();
+    com::centreon::logging::engine::unload();
+    clib::unload();
+  }
+
   void        default_data_set() {
     _creator.new_timeperiod();
     // tuesday 10:30-11:45,18:30-23:30

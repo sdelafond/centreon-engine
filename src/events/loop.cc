@@ -19,10 +19,14 @@
 ** <http://www.gnu.org/licenses/>.
 */
 
+#include <atomic>
+#include <cassert>
 #include <cstdlib>
 #include <ctime>
+#include <future>
 #include "com/centreon/engine/broker.hh"
-#include "com/centreon/concurrency/thread.hh"
+#include "com/centreon/engine/configuration/applier/state.hh"
+#include "com/centreon/engine/configuration/parser.hh"
 #include "com/centreon/engine/events/defines.hh"
 #include "com/centreon/engine/events/loop.hh"
 #include "com/centreon/engine/globals.hh"
@@ -30,10 +34,11 @@
 #include "com/centreon/engine/statusdata.hh"
 #include "com/centreon/logging/engine.hh"
 
+using namespace com::centreon::engine;
 using namespace com::centreon::engine::events;
 using namespace com::centreon::engine::logging;
 
-static loop* _instance = NULL;
+static loop* _instance = nullptr;
 
 /**************************************
 *                                     *
@@ -47,7 +52,8 @@ static loop* _instance = NULL;
  *  @return The singleton.
  */
 loop& loop::instance() {
-  return (*_instance);
+  assert(_instance);
+  return *_instance;
 }
 
 /**
@@ -56,7 +62,6 @@ loop& loop::instance() {
 void loop::load() {
   if (!_instance)
     _instance = new loop;
-  return;
 }
 
 /**
@@ -80,15 +85,12 @@ void loop::run() {
   _sleep_event.recurring = false;
   _sleep_event.event_interval = 0L;
   _sleep_event.compensate_for_time_change = false;
-  _sleep_event.timing_func = NULL;
-  _sleep_event.event_data = NULL;
-  _sleep_event.event_args = NULL;
+  _sleep_event.timing_func = nullptr;
+  _sleep_event.event_data = nullptr;
+  _sleep_event.event_args = nullptr;
   _sleep_event.event_options = 0;
-  _sleep_event.next = NULL;
-  _sleep_event.prev = NULL;
 
   _dispatching();
-  return;
 }
 
 /**
@@ -96,8 +98,7 @@ void loop::run() {
  */
 void loop::unload() {
   delete _instance;
-  _instance = NULL;
-  return;
+  _instance = nullptr;
 }
 
 /**************************************
@@ -111,35 +112,51 @@ void loop::unload() {
  */
 loop::loop()
   : _need_reload(0),
-    _reload_running(false) {
-
-}
+    _reload_running(false) {}
 
 /**
  *  Destructor.
  */
-loop::~loop() throw () {
+loop::~loop() throw () {}
 
+static void apply_conf(std::atomic<bool>* reloading) {
+  logger(log_info_message, more)
+    << "Starting to reload configuration.";
+  try {
+    configuration::state config;
+    {
+      configuration::parser p;
+      std::string path(::config->cfg_main());
+      p.parse(path, config);
+    }
+    configuration::applier::state::instance().apply(config);
+    logger(log_info_message, basic)
+      << "Configuration reloaded, main loop continuing.";
+  }
+  catch (std::exception const& e) {
+    logger(log_config_error, most)
+      << "Error: " << e.what();
+  }
+  *reloading = false;
+  logger(log_info_message, more)
+    << "Reload configuration finished.";
 }
 
 /**
  *  Slot to dispatch Centreon Engine events.
  */
 void loop::_dispatching() {
-  bool quit(false);
-  while (!quit) {
+  std::atomic<bool> reloading{false};
+  while (true) {
     // See if we should exit or restart (a signal was encountered).
-    if (sigshutdown) {
-      quit = true;
+    if (sigshutdown)
       break;
-    }
 
     // If we don't have any events to handle, exit.
-    if (!event_list_high && !event_list_low) {
+    if (timed_event::event_list_high.empty() && timed_event::event_list_low.empty()) {
       logger(log_runtime_error, basic)
         << "There aren't any events that need to be handled! "
         << "Exiting...";
-      quit = true;
       break;
     }
 
@@ -150,27 +167,27 @@ void loop::_dispatching() {
     }
 
     // Start reload configuration.
-    if (_need_reload && !_reload_running) {
-      _reload_running = true;
-      _need_reload = 0;
-      _reload_configuration.start();
-    }
-    else if (_reload_running) {
-      // Start locking engine to apply configuration.
-      if (!_reload_configuration.is_finished())
-        _reload_configuration.try_lock();
-      // Reload configuration ending.
-      else {
-        _reload_configuration.wait();
-        _reload_running = false;
-        logger(log_info_message, basic)
-           << "Configuration reloaded, main loop continuing.";
+    if (_need_reload) {
+      logger(log_info_message, most)
+        << "Need reload.";
+      if (!reloading) {
+        logger(log_info_message, most)
+          << "Reloading...";
+        reloading = true;
+        std::async(std::launch::async, apply_conf, &reloading);
       }
+      else
+        logger(log_info_message, most)
+          << "Already reloading...";
+
+      _need_reload = 0;
     }
 
     // Get the current time.
     time_t current_time;
     time(&current_time);
+
+    configuration::applier::state::instance().lock();
 
     // Hey, wait a second...  we traveled back in time!
     if (current_time < _last_time)
@@ -191,17 +208,17 @@ void loop::_dispatching() {
     // Log messages about event lists.
     logger(dbg_events, more)
       << "** Event Check Loop";
-    if (event_list_high)
+    if (!timed_event::event_list_high.empty())
       logger(dbg_events, more)
         << "Next High Priority Event Time: "
-        << my_ctime(&event_list_high->run_time);
+        << my_ctime(&(*timed_event::event_list_high.begin())->run_time);
     else
       logger(dbg_events, more)
         << "No high priority events are scheduled...";
-    if (event_list_low)
+    if (!timed_event::event_list_low.empty())
       logger(dbg_events, more)
         << "Next Low Priority Event Time:  "
-        << my_ctime(&event_list_low->run_time);
+        << my_ctime(&(*timed_event::event_list_low.begin())->run_time);
     else
       logger(dbg_events, more)
         << "No low priority events are scheduled...";
@@ -219,40 +236,35 @@ void loop::_dispatching() {
 
     // Handle high priority events.
     bool run_event(true);
-    if (event_list_high
-        && (current_time >= event_list_high->run_time)) {
+    if (!timed_event::event_list_high.empty()
+        && (current_time >= (*timed_event::event_list_high.begin())->run_time)) {
       // Remove the first event from the timing loop.
-      timed_event* temp_event(event_list_high);
-      event_list_high = event_list_high->next;
+      timed_event* temp_event(*timed_event::event_list_high.begin());
+
+      timed_event::event_list_high.pop_front();
       // We may have just removed the only item from the list.
-      if (event_list_high)
-        event_list_high->prev = NULL;
-      quick_timed_event.erase(hash_timed_event::high, temp_event);
 
       // Handle the event.
       handle_timed_event(temp_event);
 
       // Reschedule the event if necessary.
       if (temp_event->recurring)
-        reschedule_event(
-          temp_event,
-          &event_list_high,
-          &event_list_high_tail);
+        reschedule_event(temp_event, timed_event::high);
       // Else free memory associated with the event.
       else
         delete temp_event;
     }
     // Handle low priority events.
-    else if (event_list_low
-             && (current_time >= event_list_low->run_time)) {
+    else if (!timed_event::event_list_low.empty()
+             && (current_time >= (*timed_event::event_list_low.begin())->run_time)) {
       // Default action is to execute the event.
       run_event = true;
 
       // Run a few checks before executing a service check...
-      if (event_list_low->event_type == EVENT_SERVICE_CHECK) {
+      if ((*timed_event::event_list_low.begin())->event_type == EVENT_SERVICE_CHECK) {
         int nudge_seconds(0);
         service* temp_service(
-                   static_cast<service*>(event_list_low->event_data));
+                   static_cast<service*>((*timed_event::event_list_low.begin())->event_data));
 
         // Don't run a service check if we're already maxed out on the
         // number of parallel service checks...
@@ -267,16 +279,16 @@ void loop::_dispatching() {
             << currently_running_service_checks << "/"
             << config->max_parallel_service_checks()
             << ") has been reached!  Nudging "
-            << temp_service->host_name << ":"
-            << temp_service->description << " by "
+            << temp_service->get_hostname() << ":"
+            << temp_service->get_description() << " by "
             << nudge_seconds << " seconds...";
           logger(log_runtime_warning, basic)
             << "\tMax concurrent service checks ("
             << currently_running_service_checks << "/"
             << config->max_parallel_service_checks()
             << ") has been reached.  Nudging "
-            << temp_service->host_name << ":"
-            << temp_service->description << " by "
+            << temp_service->get_hostname() << ":"
+            << temp_service->get_description() << " by "
             << nudge_seconds << " seconds...";
           run_event = false;
         }
@@ -290,7 +302,7 @@ void loop::_dispatching() {
         }
 
         // Forced checks override normal check logic.
-        if (temp_service->check_options & CHECK_OPTION_FORCE_EXECUTION)
+        if (temp_service->get_check_options() & CHECK_OPTION_FORCE_EXECUTION)
           run_event = true;
 
         // Reschedule the check if we can't run it now.
@@ -299,43 +311,40 @@ void loop::_dispatching() {
           // reschedule it for a later time. Since event was not
           // executed, it needs to be remove()'ed to maintain sync with
           // event broker modules.
-          timed_event* temp_event(event_list_low);
-          remove_event(
-            temp_event,
-            &event_list_low,
-            &event_list_low_tail);
+          timed_event* temp_event{*timed_event::event_list_low.begin()};
+          remove_event(temp_event, timed_event::low);
 
           // We nudge the next check time when it is
           // due to too many concurrent service checks.
           if (nudge_seconds)
-            temp_service->next_check
-              = (time_t)(temp_service->next_check + nudge_seconds);
+            temp_service->set_next_check(
+              (time_t)(temp_service->get_next_check() + nudge_seconds));
           // Otherwise reschedule (TODO: This should be smarter as it
           // doesn't consider its timeperiod).
           else {
-            if ((SOFT_STATE == temp_service->state_type)
-                && (temp_service->current_state != STATE_OK))
-              temp_service->next_check
-                = (time_t)(temp_service->next_check
-                           + (temp_service->retry_interval
-                              * config->interval_length()));
+            if (notifier::soft == temp_service->get_state_type() &&
+                temp_service->get_current_state() != service::state_ok)
+              temp_service->set_next_check(
+                  (time_t)(temp_service->get_next_check() +
+                           temp_service->get_retry_interval() *
+                               config->interval_length()));
             else
-              temp_service->next_check
-                = (time_t)(temp_service->next_check
-                           + (temp_service->check_interval
-                              * config->interval_length()));
+              temp_service->set_next_check(
+                  (time_t)(temp_service->get_next_check() +
+                           (temp_service->get_check_interval() *
+                            config->interval_length())));
           }
-          temp_event->run_time = temp_service->next_check;
-          reschedule_event(temp_event, &event_list_low, &event_list_low_tail);
-          update_service_status(temp_service, false);
+          temp_event->run_time = temp_service->get_next_check();
+          reschedule_event(temp_event, timed_event::low);
+          temp_service->update_status(false);
           run_event = false;
         }
       }
       // Run a few checks before executing a host check...
-      else if (EVENT_HOST_CHECK == event_list_low->event_type) {
+      else if (EVENT_HOST_CHECK == (*timed_event::event_list_low.begin())->event_type) {
         // Default action is to execute the event.
         run_event = true;
-        host* temp_host(static_cast<host*>(event_list_low->event_data));
+        host* temp_host(static_cast<host*>((*timed_event::event_list_low.begin())->event_data));
 
         // Don't run a host check if active checks are disabled.
         if (!config->execute_host_checks()) {
@@ -346,7 +355,7 @@ void loop::_dispatching() {
         }
 
         // Forced checks override normal check logic.
-        if (temp_host->check_options & CHECK_OPTION_FORCE_EXECUTION)
+        if (temp_host->get_check_options() & CHECK_OPTION_FORCE_EXECUTION)
           run_event = true;
 
         // Reschedule the host check if we can't run it right now.
@@ -355,27 +364,24 @@ void loop::_dispatching() {
           // it for a later time. Since event was not executed, it needs
           // to be remove()'ed to maintain sync with event broker
           // modules.
-          timed_event* temp_event(event_list_low);
-          remove_event(
-            temp_event,
-            &event_list_low,
-            &event_list_low_tail);
+          timed_event* temp_event(*timed_event::event_list_low.begin());
+          remove_event(temp_event, timed_event::low);
 
           // Reschedule.
-          if ((SOFT_STATE == temp_host->state_type)
-              && (temp_host->current_state != STATE_OK))
-            temp_host->next_check
-              = (time_t)(temp_host->next_check
-                         + (temp_host->retry_interval
-                            * config->interval_length()));
+          if ((notifier::soft == temp_host->get_state_type())
+              && (temp_host->get_current_state() != host::state_up))
+            temp_host->set_next_check(
+              (time_t)(temp_host->get_next_check()
+                         + (temp_host->get_retry_interval()
+                            * config->interval_length())));
           else
-            temp_host->next_check
-              = (time_t)(temp_host->next_check
-                         + (temp_host->check_interval
-                            * config->interval_length()));
-          temp_event->run_time = temp_host->next_check;
-          reschedule_event(temp_event, &event_list_low, &event_list_low_tail);
-          update_host_status(temp_host, false);
+            temp_host->set_next_check(
+              (time_t)(temp_host->get_next_check()
+                         + (temp_host->get_check_interval()
+                            * config->interval_length())));
+          temp_event->run_time = temp_host->get_next_check();
+          reschedule_event(temp_event, timed_event::low);
+          temp_host->update_status(false);
           run_event = false;
         }
       }
@@ -383,12 +389,9 @@ void loop::_dispatching() {
       // Run the event.
       if (run_event) {
         // Remove the first event from the timing loop.
-        timed_event* temp_event(event_list_low);
-        event_list_low = event_list_low->next;
+        timed_event* temp_event(*timed_event::event_list_low.begin());
+        timed_event::event_list_low.pop_front();
         // We may have just removed the only item from the list.
-        if (event_list_low)
-          event_list_low->prev = NULL;
-        quick_timed_event.erase(hash_timed_event::low, temp_event);
 
         // Handle the event.
         logger(dbg_events, more)
@@ -397,10 +400,7 @@ void loop::_dispatching() {
 
         // Reschedule the event if necessary.
         if (temp_event->recurring)
-          reschedule_event(
-            temp_event,
-            &event_list_low,
-            &event_list_low_tail);
+          reschedule_event(temp_event, timed_event::low);
         // Else free memory associated with the event.
         else
           delete temp_event;
@@ -414,52 +414,43 @@ void loop::_dispatching() {
       }
     }
     // We don't have anything to do at this moment in time...
-    else
-      if ((!event_list_high
-           || (current_time < event_list_high->run_time))
-          && (!event_list_low
-              || (current_time < event_list_low->run_time))) {
-        logger(dbg_events, most)
+    else if ((timed_event::event_list_high.empty() ||
+              current_time <
+               (*timed_event::event_list_high.begin())->run_time) &&
+             (timed_event::event_list_low.empty() ||
+              current_time <
+               (*timed_event::event_list_low.begin())->run_time)) {
+      logger(dbg_events, most)
           << "No events to execute at the moment. Idling for a bit...";
 
-        // Check for external commands if we're supposed to check as
-        // often as possible.
-        if (config->command_check_interval() == -1) {
-          // Send data to event broker.
-          broker_external_command(
-            NEBTYPE_EXTERNALCOMMAND_CHECK,
-            NEBFLAG_NONE,
-            NEBATTR_NONE,
-            CMD_NONE,
-            time(NULL),
-            NULL,
-            NULL,
-            NULL);
-        }
-
-        // Set time to sleep so we don't hog the CPU...
-        timespec sleep_time;
-        sleep_time.tv_sec = (time_t)config->sleep_time();
-        sleep_time.tv_nsec
-          = (long)((config->sleep_time()
-                    - (double)sleep_time.tv_sec) * 1000000000ull);
-
-        // Populate fake "sleep" event.
-        _sleep_event.run_time = current_time;
-        _sleep_event.event_data = (void*)&sleep_time;
-
-        // Send event data to broker.
-        broker_timed_event(
-          NEBTYPE_TIMEDEVENT_SLEEP,
-          NEBFLAG_NONE,
-          NEBATTR_NONE,
-          &_sleep_event,
-          NULL);
-
-        // Wait a while so we don't hog the CPU...
-        concurrency::thread::nsleep(
-          (unsigned long)(config->sleep_time() * 1000000000l));
+      // Check for external commands if we're supposed to check as
+      // often as possible.
+      if (config->command_check_interval() == -1) {
+        // Send data to event broker.
+        broker_external_command(NEBTYPE_EXTERNALCOMMAND_CHECK, NEBFLAG_NONE,
+                                NEBATTR_NONE, CMD_NONE, time(nullptr), nullptr,
+                                nullptr, nullptr);
       }
+
+      // Set time to sleep so we don't hog the CPU...
+      timespec sleep_time;
+      sleep_time.tv_sec = (time_t)config->sleep_time();
+      sleep_time.tv_nsec =
+          (long)((config->sleep_time() - (double)sleep_time.tv_sec) *
+                 1000000000ull);
+
+      // Populate fake "sleep" event.
+      _sleep_event.run_time = current_time;
+      _sleep_event.event_data = (void*)&sleep_time;
+
+      // Send event data to broker.
+      broker_timed_event(NEBTYPE_TIMEDEVENT_SLEEP, NEBFLAG_NONE, NEBATTR_NONE,
+                         &_sleep_event, nullptr);
+
+      // Wait a while so we don't hog the CPU...
+      concurrency::thread::nsleep(
+          (unsigned long)(config->sleep_time() * 1000000000l));
+    }
+    configuration::applier::state::instance().unlock();
   }
-  return;
 }

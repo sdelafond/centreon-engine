@@ -1,5 +1,5 @@
 /*
-** Copyright 2011-2013,2015,2017 Centreon
+** Copyright 2011-2019 Centreon
 **
 ** This file is part of Centreon Engine.
 **
@@ -20,17 +20,14 @@
 #include "com/centreon/engine/broker.hh"
 #include "com/centreon/engine/config.hh"
 #include "com/centreon/engine/configuration/applier/contactgroup.hh"
-#include "com/centreon/engine/configuration/applier/member.hh"
-#include "com/centreon/engine/configuration/applier/object.hh"
 #include "com/centreon/engine/configuration/applier/state.hh"
-#include "com/centreon/engine/deleter/contactsmember.hh"
 #include "com/centreon/engine/deleter/listmember.hh"
 #include "com/centreon/engine/error.hh"
 #include "com/centreon/engine/globals.hh"
 #include "com/centreon/engine/logging/logger.hh"
-#include "com/centreon/engine/shared.hh"
 
 using namespace com::centreon::engine::configuration;
+using namespace com::centreon::engine::logging;
 
 /**
  *  Default constructor.
@@ -66,39 +63,54 @@ applier::contactgroup& applier::contactgroup::operator=(
 }
 
 /**
- *  Add new contactgroup.
+ *  Add new contactgroup
  *
  *  @param[in] obj  The new contactgroup to add into the monitoring engine.
  */
 void applier::contactgroup::add_object(
                               configuration::contactgroup const& obj) {
+  std::string const& name(obj.contactgroup_name());
+
   // Logging.
-  logger(logging::dbg_config, logging::more)
-    << "Creating new contactgroup '" << obj.contactgroup_name() << "'.";
+  logger(logging::dbg_config, logging::more) << "Creating new contactgroup '" 
+    << name << "'.";
+
+  if(engine::contactgroup::contactgroups.find(name) !=
+    engine::contactgroup::contactgroups.end())
+    throw engine_error() << "Contactgroup '" << name <<
+        "' has already been defined";
 
   // Add contact group to the global configuration set.
   config->contactgroups().insert(obj);
 
   // Create contact group.
-  contactgroup_struct* cg(add_contactgroup(
-                            obj.contactgroup_name().c_str(),
-                            NULL_IF_EMPTY(obj.alias())));
-  if (!cg)
-    throw (engine_error() << "Error: Could not register contact group '"
-           << obj.contactgroup_name() << "'");
+  std::shared_ptr<engine::contactgroup> cg{new engine::contactgroup(obj)};
 
-  // Apply resolved contacts on contactgroup.
   for (set_string::const_iterator
          it(obj.members().begin()),
          end(obj.members().end());
        it != end;
-       ++it)
-    if (!add_contact_to_contactgroup(cg, it->c_str()))
-      throw (engine_error() << "Error: Could not add contact '" << *it
-             << "' to contact group '" << obj.contactgroup_name()
-             << "'");
+       ++it) {
+    contact_map::iterator ct_it{engine::contact::contacts.find(*it)};
+    if (ct_it == engine::contact::contacts.end()) {
+     logger(log_verification_error, basic)
+        << "Error: Contact '" << *it
+        << "' specified in contact group '" << cg->get_name()
+        << "' is not defined anywhere!";
+      throw engine_error() << "Error: Cannot resolve contact group "
+         << obj.contactgroup_name() << "'";
+    } else {
+      cg->get_members().insert({ct_it->first, ct_it->second.get()});
+      timeval tv(get_broker_timestamp(nullptr));
+      broker_group(NEBTYPE_CONTACTGROUP_ADD,
+          NEBFLAG_NONE,
+          NEBATTR_NONE,
+          cg.get(),
+          &tv);
+    }
+  }
 
-  return ;
+  engine::contactgroup::contactgroups.insert({name, cg});
 }
 
 /**
@@ -124,8 +136,6 @@ void applier::contactgroup::expand_objects(configuration::state& s) {
        it != end;
        ++it)
     s.contactgroups().insert(it->second);
-
-  return ;
 }
 
 /**
@@ -148,12 +158,11 @@ void applier::contactgroup::modify_object(
            << "contact group '" << obj.contactgroup_name() << "'");
 
   // Find contact group object.
-  umap<std::string, shared_ptr<contactgroup_struct> >::iterator
-    it_obj(applier::state::instance().contactgroups_find(obj.key()));
-  if (it_obj == applier::state::instance().contactgroups().end())
+  contactgroup_map::iterator
+    it_obj(engine::contactgroup::contactgroups.find(obj.key()));
+  if (it_obj == engine::contactgroup::contactgroups.end())
     throw (engine_error() << "Error: Could not modify non-existing "
            << "contact group object '" << obj.contactgroup_name() << "'");
-  contactgroup_struct* cg(it_obj->second.get());
 
   // Update the global configuration set.
   configuration::contactgroup old_cfg(*it_cfg);
@@ -161,29 +170,38 @@ void applier::contactgroup::modify_object(
   config->contactgroups().insert(obj);
 
   // Modify properties.
-  modify_if_different(
-    cg->alias,
-    (obj.alias().empty() ? obj.contactgroup_name() : obj.alias()).c_str());
+  if (it_obj->second->get_alias() != obj.alias())
+    it_obj->second->set_alias(obj.alias());
 
-  // Were members modified ?
   if (obj.members() != old_cfg.members()) {
-    // Delete all old contact group members.
-    deleter::listmember(
-      (*it_obj).second->members,
-      &deleter::contactsmember);
+    //delete all old contact group members
+    it_obj->second->clear_members();
 
-    // Create new contact group members.
     for (set_string::const_iterator
-           it(obj.members().begin()),
-           end(obj.members().end());
-         it != end;
-         ++it)
-      if (!add_contact_to_contactgroup(
-             cg,
-             it->c_str()))
-        throw (engine_error() << "Error: Could not add contact member '"
-               << *it << "' to contact group '" << obj.contactgroup_name()
-               << "'");
+         it(obj.members().begin()),
+         end(obj.members().end());
+       it != end;
+       ++it) {
+      contact_map::const_iterator
+        ct_it{engine::contact::contacts.find(*it)};
+      if (ct_it == engine::contact::contacts.end()) {
+        logger(log_verification_error, basic)
+          << "Error: Contact '" << *it
+          << "' specified in contact group '" << it_obj->second->get_name()
+          << "' is not defined anywhere!";
+        throw engine_error() << "Error: Cannot resolve contact group "
+           << obj.contactgroup_name() << "'";
+      }
+      else {
+        it_obj->second->get_members().insert({ct_it->first, ct_it->second.get()});
+        timeval tv(get_broker_timestamp(nullptr));
+        broker_group(NEBTYPE_CONTACTGROUP_ADD,
+            NEBFLAG_NONE,
+            NEBATTR_NONE,
+            it_obj->second.get(),
+            &tv);
+      }
+    }
   }
 
   // Notify event broker.
@@ -192,7 +210,7 @@ void applier::contactgroup::modify_object(
     NEBTYPE_CONTACTGROUP_UPDATE,
     NEBFLAG_NONE,
     NEBATTR_NONE,
-    cg,
+    it_obj->second.get(),
     &tv);
 }
 
@@ -209,31 +227,28 @@ void applier::contactgroup::remove_object(
     << "Removing contactgroup '" << obj.contactgroup_name() << "'";
 
   // Find contact group.
-  umultimap<std::string, shared_ptr<contactgroup_struct> >::iterator
-    it(applier::state::instance().contactgroups_find(obj.key()));
-  if (it != applier::state::instance().contactgroups().end()) {
-    contactgroup_struct* grp(it->second.get());
+  contactgroup_map::iterator
+    it(engine::contactgroup::contactgroups.find(obj.key()));
+  if (it != engine::contactgroup::contactgroups.end()) {
 
     // Remove contact group from its list.
-    unregister_object<contactgroup_struct>(&contactgroup_list, grp);
+    //unregister_object<contactgroup>(&contactgroup_list, grp);
 
     // Notify event broker.
-    timeval tv(get_broker_timestamp(NULL));
+    timeval tv(get_broker_timestamp(nullptr));
     broker_group(
       NEBTYPE_CONTACTGROUP_DELETE,
       NEBFLAG_NONE,
       NEBATTR_NONE,
-      grp,
+      it->second.get(),
       &tv);
 
     // Remove contact group (this will effectively delete the object).
-    applier::state::instance().contactgroups().erase(it);
+    engine::contactgroup::contactgroups.erase(it);
   }
 
   // Remove contact group from the global configuration set.
   config->contactgroups().erase(obj);
-
-  return ;
 }
 
 /**
@@ -248,18 +263,14 @@ void applier::contactgroup::resolve_object(
     << "Resolving contact group '" << obj.contactgroup_name() << "'";
 
   // Find contact group.
-  umap<std::string, shared_ptr<contactgroup_struct> >::iterator
-    it(applier::state::instance().contactgroups_find(obj.key()));
-  if (applier::state::instance().contactgroups().end() == it)
-    throw (engine_error() << "Error: Cannot resolve non-existing "
-           << "contact group '" << obj.contactgroup_name() << "'");
+  contactgroup_map::iterator
+    it{engine::contactgroup::contactgroups.find(obj.key())};
+  if (engine::contactgroup::contactgroups.end() == it || !it->second)
+    throw engine_error() << "Error: Cannot resolve non-existing "
+           << "contact group '" << obj.contactgroup_name() << "'";
 
   // Resolve contact group.
-  if (!check_contactgroup(it->second.get(), &config_warnings, &config_errors))
-    throw (engine_error() << "Error: Cannot resolve contact group "
-           << obj.contactgroup_name() << "'");
-
-  return ;
+  it->second->resolve(config_warnings, config_errors);
 }
 
 /**
@@ -294,10 +305,10 @@ void applier::contactgroup::_resolve_members(
       // Find contactgroup entry.
       set_contactgroup::iterator it2(s.contactgroups_find(*it));
       if (it2 == s.contactgroups().end())
-        throw (engine_error()
+        throw engine_error()
                << "Error: Could not add non-existing contact group member '"
                << *it << "' to contactgroup '"
-               << obj.contactgroup_name() << "'");
+               << obj.contactgroup_name() << "'";
 
       // Resolve contactgroup member.
       _resolve_members(s, *it2);
@@ -309,6 +320,4 @@ void applier::contactgroup::_resolve_members(
                                resolved_group.members().end());
     }
   }
-
-  return ;
 }

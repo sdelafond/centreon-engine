@@ -1,5 +1,5 @@
 /*
-** Copyright 2011-2013,2015-2017 Centreon
+** Copyright 2011-2013,2015-2017,2019 Centreon
 **
 ** This file is part of Centreon Engine.
 **
@@ -21,23 +21,23 @@
 #include "com/centreon/engine/configuration/hostextinfo.hh"
 #include "com/centreon/engine/error.hh"
 #include "com/centreon/engine/logging/logger.hh"
+#include "com/centreon/engine/host.hh"
 #include "com/centreon/engine/string.hh"
 
 extern int config_warnings;
 extern int config_errors;
 
 using namespace com::centreon;
-using namespace com::centreon::engine;
 using namespace com::centreon::engine::configuration;
 using namespace com::centreon::engine::logging;
 
 #define SETTER(type, method) \
   &object::setter<host, type, &host::method>::generic
 
-host::setters const host::_setters[] = {
+std::unordered_map<std::string, host::setter_func> const host::_setters{
   { "host_name",                    SETTER(std::string const&, _set_host_name) },
-  { "host_id",                      SETTER(unsigned int, _set_host_id)},
-  { "_HOST_ID",                     SETTER(unsigned int, _set_host_id)},
+  { "host_id",                      SETTER(uint64_t, _set_host_id)},
+  { "_HOST_ID",                     SETTER(uint64_t, _set_host_id)},
   { "display_name",                 SETTER(std::string const&, _set_display_name) },
   { "alias",                        SETTER(std::string const&, _set_alias) },
   { "acknowledgement_timeout",      SETTER(int, set_acknowledgement_timeout) },
@@ -93,7 +93,6 @@ host::setters const host::_setters[] = {
 };
 
 // Default values.
-static int const            default_acknowledgement_timeout(0);
 static bool const           default_checks_active(true);
 static bool const           default_checks_passive(true);
 static bool const           default_check_freshness(false);
@@ -106,7 +105,7 @@ static bool const           default_flap_detection_enabled(true);
 static unsigned short const default_flap_detection_options(host::up | host::down | host::unreachable);
 static unsigned int const   default_freshness_threshold(0);
 static unsigned int const   default_high_flap_threshold(0);
-static unsigned short const default_initial_state(HOST_UP);
+static unsigned short const default_initial_state(engine::host::state_up);
 static unsigned int const   default_low_flap_threshold(0);
 static unsigned int const   default_max_check_attempts(3);
 static bool const           default_notifications_enabled(true);
@@ -124,7 +123,7 @@ static unsigned short const default_stalking_options(host::none);
  *
  *  @param[in] key The object key.
  */
-host::host(key_type const& key)
+host::host(host::key_type const& key)
   : object(object::host),
     _acknowledgement_timeout(0),
     _checks_active(default_checks_active),
@@ -137,8 +136,8 @@ host::host(key_type const& key)
     _flap_detection_options(default_flap_detection_options),
     _freshness_threshold(default_freshness_threshold),
     _high_flap_threshold(default_high_flap_threshold),
-    _host_id(0),
-    _host_name(key),
+    _host_id(key),
+    _host_name(""),
     _initial_state(default_initial_state),
     _low_flap_threshold(default_low_flap_threshold),
     _max_check_attempts(default_max_check_attempts),
@@ -226,7 +225,7 @@ host& host::operator=(host const& other) {
     _timezone = other._timezone;
     _vrml_image = other._vrml_image;
   }
-  return (*this);
+  return *this;
 }
 
 /**
@@ -296,7 +295,7 @@ bool host::operator==(host const& other) const throw () {
  *  @return True if is not the same host, otherwise false.
  */
 bool host::operator!=(host const& other) const throw () {
-  return (!operator==(other));
+  return !operator==(other);
 }
 
 /**
@@ -307,90 +306,90 @@ bool host::operator!=(host const& other) const throw () {
  *  @return True if this object is less than right.
  */
 bool host::operator<(host const& other) const throw () {
-  // host_name has to be first in this operator.
+  // host_id has to be first in this operator.
   // The configuration diff mechanism relies on this.
-  if (_host_name != other._host_name)
-    return (_host_name < other._host_name);
+  if (_host_id != other._host_id)
+    return _host_id < other._host_id;
+  else if (_host_name != other._host_name)
+    return _host_name < other._host_name;
   else if (_acknowledgement_timeout != other._acknowledgement_timeout)
-    return (_acknowledgement_timeout < other._acknowledgement_timeout);
+    return _acknowledgement_timeout < other._acknowledgement_timeout;
   else if (_action_url != other._action_url)
-    return (_action_url < other._action_url);
+    return _action_url < other._action_url;
   else if (_address != other._address)
-    return (_address < other._address);
+    return _address < other._address;
   else if (_alias != other._alias)
-    return (_alias < other._alias);
+    return _alias < other._alias;
   else if (_checks_active != other._checks_active)
-    return (_checks_active < other._checks_active);
+    return _checks_active < other._checks_active;
   else if (_checks_passive != other._checks_passive)
-    return (_checks_passive < other._checks_passive);
+    return _checks_passive < other._checks_passive;
   else if (_check_command != other._check_command)
-    return (_check_command < other._check_command);
+    return _check_command < other._check_command;
   else if (_check_freshness != other._check_freshness)
-    return (_check_freshness < other._check_freshness);
+    return _check_freshness < other._check_freshness;
   else if (_check_interval != other._check_interval)
-    return (_check_interval < other._check_interval);
+    return _check_interval < other._check_interval;
   else if (_check_period != other._check_period)
-    return (_check_period < other._check_period);
+    return _check_period < other._check_period;
   else if (_contactgroups != other._contactgroups)
-    return (_contactgroups < other._contactgroups);
+    return _contactgroups < other._contactgroups;
   else if (_contacts != other._contacts)
-    return (_contacts < other._contacts);
+    return _contacts < other._contacts;
   else if (_coords_2d != other._coords_2d)
-    return (_coords_2d < other._coords_2d);
+    return _coords_2d < other._coords_2d;
   else if (_coords_3d != other._coords_3d)
-    return (_coords_3d < other._coords_3d);
+    return _coords_3d < other._coords_3d;
   else if (_customvariables != other._customvariables)
-    return (_customvariables < other._customvariables);
+    return _customvariables.size() < other._customvariables.size();
   else if (_display_name != other._display_name)
-    return (_display_name < other._display_name);
+    return _display_name < other._display_name;
   else if (_event_handler != other._event_handler)
-    return (_event_handler < other._event_handler);
+    return _event_handler < other._event_handler;
   else if (_event_handler_enabled != other._event_handler_enabled)
-    return (_event_handler_enabled < other._event_handler_enabled);
+    return _event_handler_enabled < other._event_handler_enabled;
   else if (_first_notification_delay
            != other._first_notification_delay)
     return (_first_notification_delay
             < other._first_notification_delay);
   else if (_flap_detection_enabled != other._flap_detection_enabled)
-    return (_flap_detection_enabled < other._flap_detection_enabled);
+    return _flap_detection_enabled < other._flap_detection_enabled;
   else if (_flap_detection_options != other._flap_detection_options)
-    return (_flap_detection_options < other._flap_detection_options);
+    return _flap_detection_options < other._flap_detection_options;
   else if (_freshness_threshold != other._freshness_threshold)
-    return (_freshness_threshold < other._freshness_threshold);
+    return _freshness_threshold < other._freshness_threshold;
   else if (_high_flap_threshold != other._high_flap_threshold)
-    return (_high_flap_threshold < other._high_flap_threshold);
-  else if (_host_id != other._host_id)
-    return (_host_id < other._host_id);
+    return _high_flap_threshold < other._high_flap_threshold;
   else if (_hostgroups != other._hostgroups)
-    return (_hostgroups < other._hostgroups);
+    return _hostgroups < other._hostgroups;
   else if (_icon_image != other._icon_image)
-    return (_icon_image < other._icon_image);
+    return _icon_image < other._icon_image;
   else if (_icon_image_alt != other._icon_image_alt)
-    return (_icon_image_alt < other._icon_image_alt);
+    return _icon_image_alt < other._icon_image_alt;
   else if (_initial_state != other._initial_state)
-    return (_initial_state < other._initial_state);
+    return _initial_state < other._initial_state;
   else if (_low_flap_threshold != other._low_flap_threshold)
-    return (_low_flap_threshold < other._low_flap_threshold);
+    return _low_flap_threshold < other._low_flap_threshold;
   else if (_max_check_attempts != other._max_check_attempts)
-    return (_max_check_attempts < other._max_check_attempts);
+    return _max_check_attempts < other._max_check_attempts;
   else if (_notes != other._notes)
-    return (_notes < other._notes);
+    return _notes < other._notes;
   else if (_notes_url != other._notes_url)
-    return (_notes_url < other._notes_url);
+    return _notes_url < other._notes_url;
   else if (_notifications_enabled != other._notifications_enabled)
-    return (_notifications_enabled < other._notifications_enabled);
+    return _notifications_enabled < other._notifications_enabled;
   else if (_notification_interval != other._notification_interval)
-    return (_notification_interval < other._notification_interval);
+    return _notification_interval < other._notification_interval;
   else if (_notification_options != other._notification_options)
-    return (_notification_options < other._notification_options);
+    return _notification_options < other._notification_options;
   else if (_notification_period != other._notification_period)
-    return (_notification_period < other._notification_period);
+    return _notification_period < other._notification_period;
   else if (_obsess_over_host != other._obsess_over_host)
-    return (_obsess_over_host < other._obsess_over_host);
+    return _obsess_over_host < other._obsess_over_host;
   else if (_parents != other._parents)
-    return (_parents < other._parents);
+    return _parents < other._parents;
   else if (_process_perf_data != other._process_perf_data)
-    return (_process_perf_data < other._process_perf_data);
+    return _process_perf_data < other._process_perf_data;
   else if (_retain_nonstatus_information
            != other._retain_nonstatus_information)
     return (_retain_nonstatus_information
@@ -400,18 +399,18 @@ bool host::operator<(host const& other) const throw () {
     return (_retain_status_information
             < other._retain_status_information);
   else if (_retry_interval != other._retry_interval)
-    return (_retry_interval < other._retry_interval);
+    return _retry_interval < other._retry_interval;
   else if (_recovery_notification_delay
            != other._recovery_notification_delay)
     return (_recovery_notification_delay
             < other._recovery_notification_delay);
   else if (_stalking_options != other._stalking_options)
-    return (_stalking_options < other._stalking_options);
+    return _stalking_options < other._stalking_options;
   else if (_statusmap_image != other._statusmap_image)
-    return (_statusmap_image < other._statusmap_image);
+    return _statusmap_image < other._statusmap_image;
   else if (_timezone != other._timezone)
-    return (_timezone < other._timezone);
-  return (_vrml_image < other._vrml_image);
+    return _timezone < other._timezone;
+  return _vrml_image < other._vrml_image;
 }
 
 /**
@@ -433,8 +432,8 @@ void host::check_validity() const {
  *
  *  @return Host name.
  */
-host::key_type const& host::key() const throw () {
-  return (_host_name);
+host::key_type host::key() const throw () {
+  return _host_id;
 }
 
 /**
@@ -504,6 +503,7 @@ void host::merge(object const& obj) {
   MRG_OPTION(_obsess_over_host);
   MRG_INHERIT(_parents);
   MRG_OPTION(_process_perf_data);
+  MRG_OPTION(_recovery_notification_delay);
   MRG_OPTION(_retain_nonstatus_information);
   MRG_OPTION(_retain_status_information);
   MRG_OPTION(_retry_interval);
@@ -522,16 +522,20 @@ void host::merge(object const& obj) {
  *  @return True on success, otherwise false.
  */
 bool host::parse(char const* key, char const* value) {
-  for (unsigned int i(0);
-       i < sizeof(_setters) / sizeof(_setters[0]);
-       ++i)
-    if (!strcmp(_setters[i].name, key))
-      return ((_setters[i].func)(*this, value));
+  std::unordered_map<std::string, host::setter_func>::const_iterator
+    it{_setters.find(key)};
+  if (it != _setters.end())
+    return (it->second)(*this, value);
   if (key[0] == '_') {
-    _customvariables[key + 1] = value;
-    return (true);
+    map_customvar::iterator it(_customvariables.find(key + 1));
+    if (it == _customvariables.end())
+      _customvariables[key + 1] = customvariable(value);
+    else
+      it->second.set_value(value);
+
+    return true;
   }
-  return (false);
+  return false;
 }
 
 /**
@@ -540,7 +544,7 @@ bool host::parse(char const* key, char const* value) {
  *  @return The action_url.
  */
 std::string const& host::action_url() const throw () {
-  return (_action_url);
+  return _action_url;
 }
 
 /**
@@ -549,7 +553,7 @@ std::string const& host::action_url() const throw () {
  *  @return The address.
  */
 std::string const& host::address() const throw () {
-  return (_address);
+  return _address;
 }
 
 /**
@@ -558,7 +562,7 @@ std::string const& host::address() const throw () {
  *  @return The alias.
  */
 std::string const& host::alias() const throw () {
-  return (_alias);
+  return _alias;
 }
 
 /**
@@ -567,7 +571,7 @@ std::string const& host::alias() const throw () {
  *  @return The checks_active.
  */
 bool host::checks_active() const throw () {
-  return (_checks_active);
+  return _checks_active;
 }
 
 /**
@@ -576,7 +580,7 @@ bool host::checks_active() const throw () {
  *  @return The checks_passive.
  */
 bool host::checks_passive() const throw () {
-  return (_checks_passive);
+  return _checks_passive;
 }
 
 /**
@@ -585,7 +589,7 @@ bool host::checks_passive() const throw () {
  *  @return The check_command.
  */
 std::string const& host::check_command() const throw () {
-  return (_check_command);
+  return _check_command;
 }
 
 /**
@@ -594,7 +598,7 @@ std::string const& host::check_command() const throw () {
  *  @return The check_freshness.
  */
 bool host::check_freshness() const throw () {
-  return (_check_freshness);
+  return _check_freshness;
 }
 
 /**
@@ -603,7 +607,7 @@ bool host::check_freshness() const throw () {
  *  @return The check_interval.
  */
 unsigned int host::check_interval() const throw () {
-  return (_check_interval);
+  return _check_interval;
 }
 
 /**
@@ -612,7 +616,7 @@ unsigned int host::check_interval() const throw () {
  *  @return The check_period.
  */
 std::string const& host::check_period() const throw () {
-  return (_check_period);
+  return _check_period;
 }
 
 /**
@@ -621,7 +625,7 @@ std::string const& host::check_period() const throw () {
  *  @return The contactgroups.
  */
 set_string const& host::contactgroups() const throw () {
-  return (*_contactgroups);
+  return *_contactgroups;
 }
 
 /**
@@ -630,7 +634,7 @@ set_string const& host::contactgroups() const throw () {
  *  @return The contacts.
  */
 set_string const& host::contacts() const throw () {
-  return (*_contacts);
+  return *_contacts;
 }
 
 /**
@@ -639,7 +643,7 @@ set_string const& host::contacts() const throw () {
  *  @return The coords_2d.
  */
 point_2d const& host::coords_2d() const throw () {
-  return (_coords_2d.get());
+  return _coords_2d.get();
 }
 
 /**
@@ -648,7 +652,7 @@ point_2d const& host::coords_2d() const throw () {
  *  @return The coords_3d.
  */
 point_3d const& host::coords_3d() const throw () {
-  return (_coords_3d.get());
+  return _coords_3d.get();
 }
 
 /**
@@ -656,8 +660,17 @@ point_3d const& host::coords_3d() const throw () {
  *
  *  @return The customvariables.
  */
-map_customvar const& host::customvariables() const throw () {
-  return (_customvariables);
+engine::map_customvar const& host::customvariables() const throw () {
+  return _customvariables;
+}
+
+/**
+ *  Get customvariables.
+ *
+ *  @return The customvariables.
+ */
+engine::map_customvar& host::customvariables() throw () {
+  return _customvariables;
 }
 
 /**
@@ -666,7 +679,7 @@ map_customvar const& host::customvariables() const throw () {
  *  @return The display_name.
  */
 std::string const& host::display_name() const throw () {
-  return (_display_name);
+  return _display_name;
 }
 
 /**
@@ -675,7 +688,7 @@ std::string const& host::display_name() const throw () {
  *  @return The event_handler.
  */
 std::string const& host::event_handler() const throw () {
-  return (_event_handler);
+  return _event_handler;
 }
 
 /**
@@ -684,7 +697,7 @@ std::string const& host::event_handler() const throw () {
  *  @return The event_handler_enabled.
  */
 bool host::event_handler_enabled() const throw () {
-  return (_event_handler_enabled);
+  return _event_handler_enabled;
 }
 
 /**
@@ -693,7 +706,7 @@ bool host::event_handler_enabled() const throw () {
  *  @return The first_notification_delay.
  */
 unsigned int host::first_notification_delay() const throw () {
-  return (_first_notification_delay);
+  return _first_notification_delay;
 }
 
 /**
@@ -702,7 +715,7 @@ unsigned int host::first_notification_delay() const throw () {
  *  @return The flap_detection_enabled.
  */
 bool host::flap_detection_enabled() const throw () {
-  return (_flap_detection_enabled);
+  return _flap_detection_enabled;
 }
 
 /**
@@ -711,7 +724,7 @@ bool host::flap_detection_enabled() const throw () {
  *  @return The flap_detection_options.
  */
 unsigned int host::flap_detection_options() const throw () {
-  return (_flap_detection_options);
+  return _flap_detection_options;
 }
 
 /**
@@ -720,7 +733,7 @@ unsigned int host::flap_detection_options() const throw () {
  *  @return The freshness_threshold.
  */
 unsigned int host::freshness_threshold() const throw () {
-  return (_freshness_threshold);
+  return _freshness_threshold;
 }
 
 /**
@@ -729,7 +742,7 @@ unsigned int host::freshness_threshold() const throw () {
  *  @return True if coords 2d exist, otherwise false.
  */
 bool host::have_coords_2d() const throw () {
-  return (_coords_2d.is_set());
+  return _coords_2d.is_set();
 }
 
 /**
@@ -738,7 +751,7 @@ bool host::have_coords_2d() const throw () {
  *  @return True if coords 3d exist, otherwise false.
  */
 bool host::have_coords_3d() const throw () {
-  return (_coords_3d.is_set());
+  return _coords_3d.is_set();
 }
 
 /**
@@ -747,7 +760,7 @@ bool host::have_coords_3d() const throw () {
  *  @return The high_flap_threshold.
  */
 unsigned int host::high_flap_threshold() const throw () {
-  return (_high_flap_threshold);
+  return _high_flap_threshold;
 }
 
 /**
@@ -756,7 +769,7 @@ unsigned int host::high_flap_threshold() const throw () {
  *  @return The host groups.
  */
 set_string& host::hostgroups() throw () {
-  return (*_hostgroups);
+  return *_hostgroups;
 }
 
 /**
@@ -765,7 +778,7 @@ set_string& host::hostgroups() throw () {
  *  @return The hostgroups.
  */
 set_string const& host::hostgroups() const throw () {
-  return (*_hostgroups);
+  return *_hostgroups;
 }
 
 /**
@@ -773,8 +786,8 @@ set_string const& host::hostgroups() const throw () {
  *
  *  @return  The host id.
  */
-unsigned int host::host_id() const throw() {
-  return (_host_id);
+uint64_t host::host_id() const throw() {
+  return _host_id;
 }
 
 /**
@@ -783,7 +796,7 @@ unsigned int host::host_id() const throw() {
  *  @return The host_name.
  */
 std::string const& host::host_name() const throw () {
-  return (_host_name);
+  return _host_name;
 }
 
 /**
@@ -792,7 +805,7 @@ std::string const& host::host_name() const throw () {
  *  @return The icon_image.
  */
 std::string const& host::icon_image() const throw () {
-  return (_icon_image);
+  return _icon_image;
 }
 
 /**
@@ -801,7 +814,7 @@ std::string const& host::icon_image() const throw () {
  *  @return The icon_image_alt.
  */
 std::string const& host::icon_image_alt() const throw () {
-  return (_icon_image_alt);
+  return _icon_image_alt;
 }
 
 /**
@@ -810,7 +823,7 @@ std::string const& host::icon_image_alt() const throw () {
  *  @return The initial_state.
  */
 unsigned int host::initial_state() const throw () {
-  return (_initial_state);
+  return _initial_state;
 }
 
 /**
@@ -819,7 +832,7 @@ unsigned int host::initial_state() const throw () {
  *  @return The low_flap_threshold.
  */
 unsigned int host::low_flap_threshold() const throw () {
-  return (_low_flap_threshold);
+  return _low_flap_threshold;
 }
 
 /**
@@ -828,7 +841,7 @@ unsigned int host::low_flap_threshold() const throw () {
  *  @return The max_check_attempts.
  */
 unsigned int host::max_check_attempts() const throw () {
-  return (_max_check_attempts);
+  return _max_check_attempts;
 }
 
 /**
@@ -837,7 +850,7 @@ unsigned int host::max_check_attempts() const throw () {
  *  @return The notes.
  */
 std::string const& host::notes() const throw () {
-  return (_notes);
+  return _notes;
 }
 
 /**
@@ -846,7 +859,7 @@ std::string const& host::notes() const throw () {
  *  @return The notes_url.
  */
 std::string const& host::notes_url() const throw () {
-  return (_notes_url);
+  return _notes_url;
 }
 
 /**
@@ -855,7 +868,7 @@ std::string const& host::notes_url() const throw () {
  *  @return The notifications_enabled.
  */
 bool host::notifications_enabled() const throw () {
-  return (_notifications_enabled);
+  return _notifications_enabled;
 }
 
 /**
@@ -864,7 +877,7 @@ bool host::notifications_enabled() const throw () {
  *  @return The notification_interval.
  */
 unsigned int host::notification_interval() const throw () {
-  return (_notification_interval);
+  return _notification_interval;
 }
 
 /**
@@ -873,7 +886,7 @@ unsigned int host::notification_interval() const throw () {
  *  @return The notification_options.
  */
 unsigned int host::notification_options() const throw () {
-  return (_notification_options);
+  return _notification_options;
 }
 
 /**
@@ -882,7 +895,7 @@ unsigned int host::notification_options() const throw () {
  *  @return The notification_period.
  */
 std::string const& host::notification_period() const throw () {
-  return (_notification_period);
+  return _notification_period;
 }
 
 /**
@@ -891,7 +904,7 @@ std::string const& host::notification_period() const throw () {
  *  @return The obsess_over_host.
  */
 bool host::obsess_over_host() const throw () {
-  return (_obsess_over_host);
+  return _obsess_over_host;
 }
 
 /**
@@ -900,7 +913,7 @@ bool host::obsess_over_host() const throw () {
  *  @return The parents.
  */
 set_string& host::parents() throw () {
-  return (*_parents);
+  return *_parents;
 }
 
 /**
@@ -909,7 +922,7 @@ set_string& host::parents() throw () {
  *  @return The parents.
  */
 set_string const& host::parents() const throw () {
-  return (*_parents);
+  return *_parents;
 }
 
 /**
@@ -918,7 +931,7 @@ set_string const& host::parents() const throw () {
  *  @return The process_perf_data.
  */
 bool host::process_perf_data() const throw () {
-  return (_process_perf_data);
+  return _process_perf_data;
 }
 
 /**
@@ -927,7 +940,7 @@ bool host::process_perf_data() const throw () {
  *  @return The retain_nonstatus_information.
  */
 bool host::retain_nonstatus_information() const throw () {
-  return (_retain_nonstatus_information);
+  return _retain_nonstatus_information;
 }
 
 /**
@@ -936,7 +949,7 @@ bool host::retain_nonstatus_information() const throw () {
  *  @return The retain_status_information.
  */
 bool host::retain_status_information() const throw () {
-  return (_retain_status_information);
+  return _retain_status_information;
 }
 
 /**
@@ -945,7 +958,7 @@ bool host::retain_status_information() const throw () {
  *  @return The retry_interval.
  */
 unsigned int host::retry_interval() const throw () {
-  return (_retry_interval);
+  return _retry_interval;
 }
 
 /**
@@ -954,7 +967,7 @@ unsigned int host::retry_interval() const throw () {
  *  @return The recovery_notification_delay.
  */
 unsigned int host::recovery_notification_delay() const throw() {
-  return (_recovery_notification_delay);
+  return _recovery_notification_delay;
 }
 
 /**
@@ -963,7 +976,7 @@ unsigned int host::recovery_notification_delay() const throw() {
  *  @return The stalking_options.
  */
 unsigned int host::stalking_options() const throw () {
-  return (_stalking_options);
+  return _stalking_options;
 }
 
 /**
@@ -972,7 +985,7 @@ unsigned int host::stalking_options() const throw () {
  *  @return The statusmap_image.
  */
 std::string const& host::statusmap_image() const throw () {
-  return (_statusmap_image);
+  return _statusmap_image;
 }
 
 /**
@@ -981,7 +994,7 @@ std::string const& host::statusmap_image() const throw () {
  *  @return The timezone.
  */
 std::string const& host::timezone() const throw () {
-  return (_timezone);
+  return _timezone;
 }
 
 /**
@@ -990,7 +1003,7 @@ std::string const& host::timezone() const throw () {
  *  @return The vrml_image.
  */
 std::string const& host::vrml_image() const throw () {
-  return (_vrml_image);
+  return _vrml_image;
 }
 
 /**
@@ -999,7 +1012,7 @@ std::string const& host::vrml_image() const throw () {
  *  @return Acknowledgement timeout.
  */
 int host::get_acknowledgement_timeout() const throw () {
-  return (_acknowledgement_timeout);
+  return _acknowledgement_timeout;
 }
 
 /**
@@ -1013,7 +1026,7 @@ bool host::set_acknowledgement_timeout(int value) {
   bool value_positive(value >= 0);
   if (value_positive)
     _acknowledgement_timeout = value;
-  return (value_positive);
+  return value_positive;
 }
 
 /**
@@ -1025,7 +1038,7 @@ bool host::set_acknowledgement_timeout(int value) {
  */
 bool host::_set_action_url(std::string const& value) {
   _action_url = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1037,7 +1050,7 @@ bool host::_set_action_url(std::string const& value) {
  */
 bool host::_set_address(std::string const& value) {
   _address = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1049,7 +1062,7 @@ bool host::_set_address(std::string const& value) {
  */
 bool host::_set_alias(std::string const& value) {
   _alias = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1061,7 +1074,7 @@ bool host::_set_alias(std::string const& value) {
  */
 bool host::_set_checks_active(bool value) {
   _checks_active = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1073,7 +1086,7 @@ bool host::_set_checks_active(bool value) {
  */
 bool host::_set_checks_passive(bool value) {
   _checks_passive = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1085,7 +1098,7 @@ bool host::_set_checks_passive(bool value) {
  */
 bool host::_set_check_command(std::string const& value) {
   _check_command = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1097,7 +1110,7 @@ bool host::_set_check_command(std::string const& value) {
  */
 bool host::_set_check_freshness(bool value) {
   _check_freshness = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1109,7 +1122,7 @@ bool host::_set_check_freshness(bool value) {
  */
 bool host::_set_check_interval(unsigned int value) {
   _check_interval = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1121,7 +1134,7 @@ bool host::_set_check_interval(unsigned int value) {
  */
 bool host::_set_check_period(std::string const& value) {
   _check_period = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1133,7 +1146,7 @@ bool host::_set_check_period(std::string const& value) {
  */
 bool host::_set_contactgroups(std::string const& value) {
   _contactgroups = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1145,7 +1158,7 @@ bool host::_set_contactgroups(std::string const& value) {
  */
 bool host::_set_contacts(std::string const& value) {
   _contacts = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1159,19 +1172,19 @@ bool host::_set_coords_2d(std::string const& value) {
   std::list<std::string> coords;
   string::split(value, coords, ',');
   if (coords.size() != 2)
-    return (false);
+    return false;
 
   int x;
   if (!string::to(string::trim(coords.front()).c_str(), x))
-    return (false);
+    return false;
   coords.pop_front();
 
   int y;
   if (!string::to(string::trim(coords.front()).c_str(), y))
-    return (false);
+    return false;
 
   _coords_2d = point_2d(x, y);
-  return (true);
+  return true;
 }
 
 /**
@@ -1185,24 +1198,24 @@ bool host::_set_coords_3d(std::string const& value) {
   std::list<std::string> coords;
   string::split(value, coords, ',');
   if (coords.size() != 3)
-    return (false);
+    return false;
 
   double x;
   if (!string::to(string::trim(coords.front()).c_str(), x))
-    return (false);
+    return false;
   coords.pop_front();
 
   double y;
   if (!string::to(string::trim(coords.front()).c_str(), y))
-    return (false);
+    return false;
   coords.pop_front();
 
   double z;
   if (!string::to(string::trim(coords.front()).c_str(), z))
-    return (false);
+    return false;
 
   _coords_3d = point_3d(x, y, z);
-  return (true);
+  return true;
 }
 
 /**
@@ -1214,7 +1227,7 @@ bool host::_set_coords_3d(std::string const& value) {
  */
 bool host::_set_display_name(std::string const& value) {
   _display_name = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1226,7 +1239,7 @@ bool host::_set_display_name(std::string const& value) {
  */
 bool host::_set_event_handler(std::string const& value) {
   _event_handler = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1238,7 +1251,7 @@ bool host::_set_event_handler(std::string const& value) {
  */
 bool host::_set_event_handler_enabled(bool value) {
   _event_handler_enabled = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1250,10 +1263,11 @@ bool host::_set_event_handler_enabled(bool value) {
  */
 bool host::_set_failure_prediction_enabled(bool value) {
   (void)value;
-  logger(log_config_warning, basic)
-    << "Warning: host failure_prediction_enabled was ignored";
+  logger(log_verification_error, basic)
+    << "Warning: host failure_prediction_enabled is deprecated"
+    << " This option will not be supported in 20.04.";
   ++config_warnings;
-  return (true);
+  return true;
 }
 
 /**
@@ -1266,8 +1280,9 @@ bool host::_set_failure_prediction_enabled(bool value) {
 bool host::_set_failure_prediction_options(
        std::string const& value) {
   (void)value;
-  logger(log_config_warning, basic)
-    << "Warning: service failure_prediction_options was ignored";
+  logger(log_verification_error, basic)
+    << "Warning: service failure_prediction_options is deprecated"
+    << " This option will not be supported in 20.04.";
   ++config_warnings;
   return (true);
 }
@@ -1282,7 +1297,7 @@ bool host::_set_failure_prediction_options(
 bool host::_set_first_notification_delay(
        unsigned int value) {
   _first_notification_delay = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1294,7 +1309,7 @@ bool host::_set_first_notification_delay(
  */
 bool host::_set_flap_detection_enabled(bool value) {
   _flap_detection_enabled = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1325,10 +1340,10 @@ bool host::_set_flap_detection_options(
     else if (*it == "a" || *it == "all")
       options = up | down | unreachable;
     else
-      return (false);
+      return false;
   }
   _flap_detection_options = options;
-  return (true);
+  return true;
 }
 
 /**
@@ -1340,7 +1355,7 @@ bool host::_set_flap_detection_options(
  */
 bool host::_set_freshness_threshold(unsigned int value) {
   _freshness_threshold = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1352,7 +1367,7 @@ bool host::_set_freshness_threshold(unsigned int value) {
  */
 bool host::_set_high_flap_threshold(unsigned int value) {
   _high_flap_threshold = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1362,9 +1377,9 @@ bool host::_set_high_flap_threshold(unsigned int value) {
  *
  *  @return True on success, otherwise false.
  */
-bool host::_set_host_id(unsigned int value) {
+bool host::_set_host_id(uint64_t value) {
   _host_id = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1376,7 +1391,7 @@ bool host::_set_host_id(unsigned int value) {
  */
 bool host::_set_host_name(std::string const& value) {
   _host_name = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1388,7 +1403,7 @@ bool host::_set_host_name(std::string const& value) {
  */
 bool host::_set_hostgroups(std::string const& value) {
   _hostgroups = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1400,7 +1415,7 @@ bool host::_set_hostgroups(std::string const& value) {
  */
 bool host::_set_icon_image(std::string const& value) {
   _icon_image = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1412,7 +1427,7 @@ bool host::_set_icon_image(std::string const& value) {
  */
 bool host::_set_icon_image_alt(std::string const& value) {
   _icon_image_alt = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1426,14 +1441,14 @@ bool host::_set_initial_state(std::string const& value) {
   std::string data(value);
   string::trim(data);
   if (data == "o" || data == "up")
-    _initial_state = HOST_UP;
+    _initial_state =  engine::host::state_up;
   else if (data == "d" || data == "down")
-    _initial_state = HOST_DOWN;
+    _initial_state =  engine::host::state_down;
   else if (data == "u" || data == "unreachable")
-    _initial_state = HOST_UNREACHABLE;
+    _initial_state =  engine::host::state_unreachable;
   else
-    return (false);
-  return (true);
+    return false;
+  return true;
 }
 
 /**
@@ -1445,7 +1460,7 @@ bool host::_set_initial_state(std::string const& value) {
  */
 bool host::_set_low_flap_threshold(unsigned int value) {
   _low_flap_threshold = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1457,9 +1472,9 @@ bool host::_set_low_flap_threshold(unsigned int value) {
  */
 bool host::_set_max_check_attempts(unsigned int value) {
   if (!value)
-    return (false);
+    return false;
   _max_check_attempts = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1471,7 +1486,7 @@ bool host::_set_max_check_attempts(unsigned int value) {
  */
 bool host::_set_notes(std::string const& value) {
   _notes = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1483,7 +1498,7 @@ bool host::_set_notes(std::string const& value) {
  */
 bool host::_set_notes_url(std::string const& value) {
   _notes_url = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1495,7 +1510,7 @@ bool host::_set_notes_url(std::string const& value) {
  */
 bool host::_set_notifications_enabled(bool value) {
   _notifications_enabled = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1508,7 +1523,7 @@ bool host::_set_notifications_enabled(bool value) {
 bool host::_set_notification_interval(
        unsigned int value) {
   _notification_interval = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1543,10 +1558,10 @@ bool host::_set_notification_options(
     else if (*it == "a" || *it == "all")
       options = down | unreachable | up | flapping | downtime;
     else
-      return (false);
+      return false;
   }
   _notification_options = options;
-  return (true);
+  return true;
 }
 
 /**
@@ -1559,7 +1574,7 @@ bool host::_set_notification_options(
 bool host::_set_notification_period(
        std::string const& value) {
   _notification_period = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1571,7 +1586,7 @@ bool host::_set_notification_period(
  */
 bool host::_set_obsess_over_host(bool value) {
   _obsess_over_host = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1583,7 +1598,7 @@ bool host::_set_obsess_over_host(bool value) {
  */
 bool host::_set_parents(std::string const& value) {
   _parents = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1595,7 +1610,7 @@ bool host::_set_parents(std::string const& value) {
  */
 bool host::_set_process_perf_data(bool value) {
   _process_perf_data = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1608,7 +1623,7 @@ bool host::_set_process_perf_data(bool value) {
 bool host::_set_retain_nonstatus_information(
        bool value) {
   _retain_nonstatus_information = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1620,7 +1635,7 @@ bool host::_set_retain_nonstatus_information(
  */
 bool host::_set_retain_status_information(bool value) {
   _retain_status_information = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1632,7 +1647,7 @@ bool host::_set_retain_status_information(bool value) {
  */
 bool host::_set_retry_interval(unsigned int value) {
   _retry_interval = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1644,7 +1659,7 @@ bool host::_set_retry_interval(unsigned int value) {
  */
 bool host::_set_recovery_notification_delay(unsigned int value) {
   _recovery_notification_delay = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1675,10 +1690,10 @@ bool host::_set_stalking_options(
     else if (*it == "a" || *it == "all")
       options = up | down | unreachable;
     else
-      return (false);
+      return false;
   }
   _stalking_options = options;
-  return (true);
+  return true;
 }
 
 /**
@@ -1691,7 +1706,7 @@ bool host::_set_stalking_options(
 bool host::_set_statusmap_image(
        std::string const& value) {
   _statusmap_image = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1703,7 +1718,7 @@ bool host::_set_statusmap_image(
  */
 bool host::_set_timezone(std::string const& value) {
   _timezone = value;
-  return (true);
+  return true;
 }
 
 /**
@@ -1715,5 +1730,5 @@ bool host::_set_timezone(std::string const& value) {
  */
 bool host::_set_vrml_image(std::string const& value) {
   _vrml_image = value;
-  return (true);
+  return true;
 }
