@@ -1,3 +1,13 @@
+centreon-engine (19.10.8-1) unstable; urgency=medium
+
+  * Add debian/watch
+  * New upstream version 19.10.8
+  * Adjust debian/rules to new source layout
+  * Bump up Standards-Version
+  * Remove patches merged upstream
+
+ -- Sebastien Delafond <seb@debian.org>  Fri, 27 Dec 2019 08:03:54 +0100
+
 centreon-engine (18.10.0-4) unstable; urgency=medium
 
   * Remove leftover /var/log/centreon-engine upong purge'ing (Closes: #920830)
