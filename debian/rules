@@ -29,7 +29,7 @@ export CMAKE_OPTIONS := \
   -DWITH_GROUP=centreon-engine
 
 %:
-	dh $@ --sourcedirectory=build --no-parallel
+	dh $@ --sourcedirectory=. --no-parallel
 
 override_dh_auto_configure:
-	dh_auto_configure --sourcedirectory=build -- $(CMAKE_OPTIONS)
+	dh_auto_configure --sourcedirectory=. -- $(CMAKE_OPTIONS)
