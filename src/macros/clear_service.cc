@@ -75,37 +75,16 @@ int clear_service_macros_r(nagios_macros* mac) {
   for (unsigned int i = 0;
        i < sizeof(to_free) / sizeof(*to_free);
        ++i) {
-    delete[] mac->x[i];
-    mac->x[i] = NULL;
+    mac->x[i] = "";
   }
 
   // Clear custom service variables.
-  customvariablesmember* next(NULL);
-  for (customvariablesmember* it = mac->custom_service_vars;
-       it != NULL;
-       it = next) {
-    next = it->next;
-    delete[] it->variable_name;
-    delete[] it->variable_value;
-    delete it;
-  }
+  mac->custom_service_vars.clear();
 
   // Clear pointers.
-  mac->custom_service_vars = NULL;
-  mac->service_ptr = NULL;
+  mac->service_ptr = nullptr;
 
-  return (OK);
-}
-
-/**
- *  Clear global service macros.
- *
- *  @return OK on success.
- *
- *  @see clear_service_macros_r
- */
-int clear_service_macros() {
-  return (clear_service_macros_r(get_global_macros()));
+  return OK;
 }
 
 }

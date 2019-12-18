@@ -39,13 +39,12 @@ using namespace com::centreon::engine::commands;
  */
 static bool run_without_timeout() {
   // Raw command object and its waiter.
-  shared_ptr<raw> cmd(new raw(__func__, "./bin_test_run --timeout=off"));
+  std::shared_ptr<raw> cmd(new raw(__func__, "./bin_test_run --timeout=off"));
   wait_process wait_proc(cmd.get());
   set::instance().add_command(cmd);
 
   // Run command and wait for it to exit.
   nagios_macros mac;
-  memset(&mac, 0, sizeof(mac));
   unsigned long id(cmd->run(cmd->get_command_line(), mac, 0));
   wait_proc.wait();
 
@@ -64,14 +63,13 @@ static bool run_without_timeout() {
  */
 static bool run_with_timeout() {
   // Raw command object and its waiter.
-  shared_ptr<raw> cmd(new raw(__func__, "./bin_test_run --timeout=on"));
+  std::shared_ptr<raw> cmd(new raw(__func__, "./bin_test_run --timeout=on"));
   wait_process wait_proc(cmd.get());
   set::instance().add_command(cmd);
 
   // Run command and wait for it to exit.
   nagios_macros mac;
-  memset(&mac, 0, sizeof(mac));
-  unsigned long id(cmd->run(cmd->get_command_line(), mac, 1));
+  uint64_t id(cmd->run(cmd->get_command_line(), mac, 1));
   wait_proc.wait();
 
   // Check result.
@@ -93,13 +91,12 @@ static bool run_with_environment_macros() {
 
   // Get environment macros.
   nagios_macros mac;
-  memset(&mac, 0, sizeof(mac));
   char const* argv = "default_arg";
   mac.argv[0] = new char[strlen(argv) + 1];
   strcpy(mac.argv[0], argv);
 
   // Raw command object and its waiter.
-  shared_ptr<raw> cmd(new raw(__func__, "./bin_test_run --check_macros"));
+  std::shared_ptr<raw> cmd(new raw(__func__, "./bin_test_run --check_macros"));
   wait_process wait_proc(cmd.get());
   set::instance().add_command(cmd);
 
@@ -123,22 +120,21 @@ static bool run_with_environment_macros() {
  */
 static bool run_with_single_quotes() {
   // Raw command object and its waiter.
-  shared_ptr<raw> cmd(new raw(__func__, "'./bin_test_run' '--timeout'='off'"));
+  std::shared_ptr<raw> cmd(new raw(__func__, "'./bin_test_run' '--timeout'='off'"));
   wait_process wait_proc(cmd.get());
   set::instance().add_command(cmd);
 
   // Run command and wait for it to exit.
   nagios_macros mac;
-  memset(&mac, 0, sizeof(mac));
-  unsigned long id(cmd->run(cmd->get_command_line(), mac, 0));
+  uint64_t id(cmd->run(cmd->get_command_line(), mac, 0));
   wait_proc.wait();
 
   // Check result.
   result const& res = wait_proc.get_result();
-  return (!((res.command_id != id)
+  return !((res.command_id != id)
             || (res.exit_code != STATE_OK)
             || (res.exit_status != process::normal)
-            || (res.output != "./bin_test_run --timeout=off")));
+            || (res.output != "./bin_test_run --timeout=off"));
 }
 
 /**
@@ -148,13 +144,12 @@ static bool run_with_single_quotes() {
  */
 static bool run_with_double_quotes() {
   // Raw command object and its waiter.
-  shared_ptr<raw> cmd(new raw(__func__, "\"./bin_test_run\" \"--timeout\"=\"off\""));
+  std::shared_ptr<raw> cmd(new raw(__func__, "\"./bin_test_run\" \"--timeout\"=\"off\""));
   wait_process wait_proc(cmd.get());
   set::instance().add_command(cmd);
 
   // Run command and wait for it to exit.
   nagios_macros mac;
-  memset(&mac, 0, sizeof(mac));
   unsigned long id(cmd->run(cmd->get_command_line(), mac, 0));
   wait_proc.wait();
 

@@ -47,7 +47,12 @@ raw::raw(
        std::string const& name,
        std::string const& command_line,
        command_listener* listener)
-  : command(name, command_line, listener), process_listener() {}
+  : command(name, command_line, listener), process_listener() {
+  if (_command_line.empty())
+    throw (engine_error()
+      << "Could not create '"
+      << _name << "' command: command line is empty");
+}
 
 /**
  *  Copy constructor
@@ -119,7 +124,7 @@ unsigned long raw::run(
     << "raw::run: cmd='" << processed_cmd << "', timeout=" << timeout;
 
   // Get process and put into the busy list.
-  process* p(NULL);
+  process* p(nullptr);
   unsigned long command_id(get_uniq_id());
   {
     concurrency::locker lock(&_lock);
@@ -146,6 +151,7 @@ unsigned long raw::run(
 
     concurrency::locker lock(&_lock);
     _processes_busy.erase(p);
+    delete p;
     throw;
   }
   return (command_id);
@@ -204,13 +210,13 @@ void raw::run(
   res.exit_status = p.exit_status();
 
   if (res.exit_status == process::timeout) {
-    res.exit_code = STATE_UNKNOWN;
+    res.exit_code = service::state_unknown;
     res.output = "(Process Timeout)";
   }
   else if ((res.exit_status == process::crash)
            || (res.exit_code < -1)
            || (res.exit_code > 3))
-    res.exit_code = STATE_UNKNOWN;
+    res.exit_code = service::state_unknown;
 
   logger(dbg_commands, basic)
     << "raw::run: end process: "
@@ -220,7 +226,6 @@ void raw::run(
     "exit_code=" << res.exit_code << ", "
     "exit_status=" << res.exit_status << ", "
     "output='" << res.output << "'";
-  return;
 }
 
 /**************************************
@@ -236,7 +241,6 @@ void raw::run(
  */
 void raw::data_is_available(process& p) throw () {
   (void)p;
-  return;
 }
 
 /**
@@ -246,7 +250,6 @@ void raw::data_is_available(process& p) throw () {
  */
 void raw::data_is_available_err(process& p) throw () {
   (void)p;
-  return;
 }
 
 /**
@@ -264,7 +267,7 @@ void raw::finished(process& p) throw () {
     {
       concurrency::locker lock(&_lock);
       // Find process from the busy list.
-      umap<process*, unsigned long>::iterator
+      std::unordered_map<process*, unsigned long>::iterator
         it(_processes_busy.find(&p));
       if (it == _processes_busy.end()) {
         // Put the process into the free list.
@@ -304,13 +307,13 @@ void raw::finished(process& p) throw () {
     res.exit_status = p.exit_status();
 
     if (res.exit_status == process::timeout) {
-      res.exit_code = STATE_UNKNOWN;
+      res.exit_code = service::state_unknown;
       res.output = "(Process Timeout)";
     }
     else if ((res.exit_status == process::crash)
              || (res.exit_code < -1)
              || (res.exit_code > 3))
-      res.exit_code = STATE_UNKNOWN;
+      res.exit_code = service::state_unknown;
 
     logger(dbg_commands, basic)
       << "raw::finished: "
@@ -323,7 +326,7 @@ void raw::finished(process& p) throw () {
 
     // Forward result to the listener.
     if (_listener)
-      (_listener->finished)(res);
+      _listener->finished(res);
   }
   catch (std::exception const& e) {
     logger(log_runtime_warning, basic)
@@ -334,7 +337,6 @@ void raw::finished(process& p) throw () {
     concurrency::locker lock(&_lock);
     _processes_free.push_back(&p);
   }
-  return;
 }
 
 /**
@@ -347,12 +349,10 @@ void raw::_build_argv_macro_environment(
             nagios_macros const& macros,
             environment& env) {
   for (unsigned int i(0); i < MAX_COMMAND_ARGUMENTS; ++i) {
-    char const* value(macros.argv[i] ? macros.argv[i] : "");
     std::ostringstream oss;
-    oss << MACRO_ENV_VAR_PREFIX "ARG" << (i + 1) << "=" << value;
+    oss << MACRO_ENV_VAR_PREFIX "ARG" << (i + 1) << "=" << macros.argv[i];
     env.add(oss.str());
   }
-  return;
 }
 
 /**
@@ -365,16 +365,13 @@ void raw::_build_contact_address_environment(
             nagios_macros const& macros,
             environment& env) {
   if (!macros.contact_ptr)
-    return;
-  for (unsigned int i(0); i < MAX_CONTACT_ADDRESSES; ++i) {
-    char const* value(macros.contact_ptr->address[i]);
-    if (!value)
-      value = "";
+    return ;
+  std::vector<std::string> const& address(macros.contact_ptr->get_addresses());
+  for (unsigned int i(0); i < address.size(); ++i) {
     std::ostringstream oss;
-    oss << MACRO_ENV_VAR_PREFIX "CONTACTADDRESS" << i << "=" << value;
+    oss << MACRO_ENV_VAR_PREFIX "CONTACTADDRESS" << i << "=" << address[i];
     env.add(oss.str());
   }
-  return;
 }
 
 /**
@@ -387,41 +384,30 @@ void raw::_build_custom_contact_macro_environment(
             nagios_macros& macros,
             environment& env) {
   // Build custom contact variable.
-  contact* hst(macros.contact_ptr);
-  if (hst) {
-    for (customvariablesmember* customvar(hst->custom_variables);
-         customvar;
-         customvar = customvar->next)
-      if (customvar->variable_name) {
-        char const* value(customvar->variable_value);
-        if (!value)
-          value = "";
+  contact* cntct(macros.contact_ptr);
+  if (cntct) {
+    for (auto const& cv : cntct->get_custom_variables()) {
+      if (!cv.first.empty()) {
         std::string name("_CONTACT");
-        name.append(customvar->variable_name);
-        add_custom_variable_to_object(
-          &macros.custom_contact_vars,
-          name.c_str(),
-          value);
+        name.append(cv.first);
+        macros.custom_contact_vars[name] =  cv.second;
       }
+    }
   }
   // Set custom contact variable into the environement
-  for (customvariablesmember* customvar(macros.custom_contact_vars);
-       customvar;
-       customvar = customvar->next)
-    if (customvar->variable_name) {
-      char const* value("");
-      if (customvar->variable_value)
-        value = clean_macro_chars(
-                  customvar->variable_value,
-                  STRIP_ILLEGAL_MACRO_CHARS | ESCAPE_MACRO_CHARS);
+  for (auto const& cv : macros.custom_contact_vars) {
+    if (!cv.first.empty()) {
+      std::string value(clean_macro_chars(
+            cv.second.get_value(),
+            STRIP_ILLEGAL_MACRO_CHARS | ESCAPE_MACRO_CHARS));
       std::string line;
       line.append(MACRO_ENV_VAR_PREFIX);
-      line.append(customvar->variable_name);
+      line.append(cv.first);
       line.append("=");
       line.append(value);
       env.add(line);
     }
-  return;
+  }
 }
 
 /**
@@ -436,39 +422,28 @@ void raw::_build_custom_host_macro_environment(
   // Build custom host variable.
   host* hst(macros.host_ptr);
   if (hst) {
-    for (customvariablesmember* customvar(hst->custom_variables);
-         customvar;
-         customvar = customvar->next)
-      if (customvar->variable_name) {
-        char const* value("");
-        if (customvar->variable_value)
-          value = customvar->variable_value;
+    for (auto const& cv : hst->custom_variables) {
+      if (!cv.first.empty()) {
         std::string name("_HOST");
-        name.append(customvar->variable_name);
-        add_custom_variable_to_object(
-          &macros.custom_host_vars,
-          name.c_str(),
-          value);
+        name.append(cv.first);
+        macros.custom_host_vars[name] = cv.second;
       }
+    }
   }
   // Set custom host variable into the environement
-  for (customvariablesmember* customvar(macros.custom_host_vars);
-       customvar;
-       customvar = customvar->next)
-    if (customvar->variable_name) {
-      char const* value("");
-      if (customvar->variable_value)
-        value = clean_macro_chars(
-                  customvar->variable_value,
-                  STRIP_ILLEGAL_MACRO_CHARS | ESCAPE_MACRO_CHARS);
+  for (auto const& cv : macros.custom_host_vars) {
+    if (!cv.first.empty()) {
+      std::string value(clean_macro_chars(
+            cv.second.get_value(),
+            STRIP_ILLEGAL_MACRO_CHARS | ESCAPE_MACRO_CHARS));
       std::string line;
       line.append(MACRO_ENV_VAR_PREFIX);
-      line.append(customvar->variable_name);
+      line.append(cv.first);
       line.append("=");
       line.append(value);
       env.add(line);
     }
-  return;
+  }
 }
 
 /**
@@ -481,41 +456,30 @@ void raw::_build_custom_service_macro_environment(
             nagios_macros& macros,
             environment& env) {
   // Build custom service variable.
-  service* hst(macros.service_ptr);
-  if (hst) {
-    for (customvariablesmember* customvar(hst->custom_variables);
-         customvar;
-         customvar = customvar->next)
-      if (customvar->variable_name) {
-        char const* value(customvar->variable_value);
-        if (!value)
-          value = "";
+  service* svc(macros.service_ptr);
+  if (svc) {
+    for (auto const& cv : svc->custom_variables) {
+      if (!cv.first.empty()) {
         std::string name("_SERVICE");
-        name.append(customvar->variable_name);
-        add_custom_variable_to_object(
-          &macros.custom_service_vars,
-          name.c_str(),
-          value);
+        name.append(cv.first);
+        macros.custom_service_vars[name] = cv.second;
       }
+    }
   }
   // Set custom service variable into the environement
-  for (customvariablesmember* customvar(macros.custom_service_vars);
-       customvar;
-       customvar = customvar->next)
-    if (customvar->variable_name) {
-      char const* value("");
-      if (customvar->variable_value)
-        value = clean_macro_chars(
-                  customvar->variable_value,
-                  STRIP_ILLEGAL_MACRO_CHARS | ESCAPE_MACRO_CHARS);
+  for (auto const& cv : macros.custom_service_vars) {
+    if (!cv.first.empty()) {
+      std::string value(clean_macro_chars(
+            cv.second.get_value(),
+            STRIP_ILLEGAL_MACRO_CHARS | ESCAPE_MACRO_CHARS));
       std::string line;
       line.append(MACRO_ENV_VAR_PREFIX);
-      line.append(customvar->variable_name);
+      line.append(cv.first);
       line.append("=");
       line.append(value);
       env.add(line);
     }
-  return;
+  }
 }
 
 /**
@@ -535,7 +499,6 @@ void raw::_build_environment_macros(
     _build_custom_contact_macro_environment(macros, env);
     _build_contact_address_environment(macros, env);
   }
-  return;
 }
 
 /**
@@ -551,7 +514,7 @@ void raw::_build_macrosx_environment(
     int release_memory(0);
 
     // Need to grab macros?
-    if (!macros.x[i]) {
+    if (macros.x[i].empty()) {
       // Skip summary macro in lage instalation tweaks.
       if ((i < MACRO_TOTALHOSTSUP)
           || (i > MACRO_TOTALSERVICEPROBLEMSUNHANDLED)
@@ -559,30 +522,28 @@ void raw::_build_macrosx_environment(
         grab_macrox_value_r(
           &macros,
           i,
-          NULL,
-          NULL,
-          &macros.x[i],
+          "",
+          "",
+          macros.x[i],
           &release_memory);
       }
     }
 
     // Add into the environment.
-    if (macro_x_names[i]) {
+    if (!macro_x_names[i].empty()) {
       std::string line;
       line.append(MACRO_ENV_VAR_PREFIX);
       line.append(macro_x_names[i]);
       line.append("=");
-      line.append(macros.x[i] ? macros.x[i] : "");
+      line.append(macros.x[i]);
       env.add(line);
     }
 
     // Release memory if necessary.
     if (release_memory) {
-      delete[] macros.x[i];
-      macros.x[i] = NULL;
+      macros.x[i] = "";
     }
   }
-  return;
 }
 
 /**
@@ -597,10 +558,10 @@ process* raw::_get_free_process() {
     p->enable_stream(process::in, false);
     p->enable_stream(process::err, false);
     p->setpgid_on_exec(config->use_setpgid());
-    return (p);
+    return p;
   }
   // Get a free process.
   process* p(_processes_free.front());
   _processes_free.pop_front();
-  return (p);
+  return p;
 }

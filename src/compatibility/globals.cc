@@ -17,6 +17,7 @@
 ** <http://www.gnu.org/licenses/>.
 */
 
+#include <cstdint>
 #include <climits>
 #include <cstddef>
 #include "globals.h"
@@ -43,7 +44,7 @@ int verify_object_relationships(1);
 int bare_update_checks(0);
 int check_for_updates(0);
 int update_available(0);
-unsigned long update_uid(0);
+uint64_t update_uid(0);
 char const* last_program_version("");
 char const* new_program_version("");
 
@@ -53,8 +54,6 @@ unsigned long retained_service_attribute_mask(0);
 
 // Commands execution system.
 circular_buffer check_result_buffer;
-check_result check_result_info;
-check_result* check_result_list(NULL);
 unsigned int child_processes_fork_twice(UINT_MAX);
 
 // Embedded Perl.

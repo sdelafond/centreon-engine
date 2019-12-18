@@ -45,7 +45,7 @@ extern int verify_object_relationships;
 extern int bare_update_checks;
 extern int check_for_updates;
 extern int update_available;
-extern unsigned long update_uid;
+extern uint64_t update_uid;
 extern char const* last_program_version;
 extern char const* new_program_version;
 
@@ -55,8 +55,6 @@ extern unsigned long retained_service_attribute_mask;
 
 // Commands execution system.
 extern circular_buffer check_result_buffer;
-extern check_result check_result_info;
-extern check_result* check_result_list;
 extern unsigned int child_processes_fork_twice;
 
 // Embedded Perl.

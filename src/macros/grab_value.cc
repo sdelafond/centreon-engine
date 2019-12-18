@@ -1,6 +1,6 @@
 /*
-** Copyright 1999-2010      Ethan Galstad
-** Copyright 2011-2013,2016 Centreon
+** Copyright 1999-2010 Ethan Galstad
+** Copyright 2011-2019 Centreon
 **
 ** This file is part of Centreon Engine.
 **
@@ -19,15 +19,16 @@
 */
 
 #include <cstdlib>
+#include "com/centreon/engine/configuration/applier/state.hh"
 #include "com/centreon/engine/globals.hh"
 #include "com/centreon/engine/logging/logger.hh"
 #include "com/centreon/engine/macros/grab_value.hh"
 #include "com/centreon/engine/macros.hh"
 #include "com/centreon/engine/string.hh"
-#include "com/centreon/unordered_hash.hh"
 #include "com/centreon/engine/configuration/applier/state.hh"
 
 using namespace com::centreon::engine;
+using namespace com::centreon::engine::configuration::applier;
 using namespace com::centreon::engine::logging;
 
 /**************************************
@@ -52,15 +53,24 @@ using namespace com::centreon::engine::logging;
 static int handle_host_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   int retval;
-  if (arg2 == NULL) {
+  if (arg2.empty()) {
     // Find the host for on-demand macros
     // or use saved host pointer.
-    host* hst(arg1 ? find_host(arg1) : mac->host_ptr);
+    host *hst = nullptr;
+
+    if(!arg1.empty()) {
+      host_map::const_iterator it(host::hosts.find(arg1));
+      if (it != host::hosts.end())
+        hst = it->second.get();
+    }
+    else
+      hst = mac->host_ptr;
+
     if (hst)
       // Get the host macro value.
       retval = grab_standard_host_macro_r(
@@ -74,41 +84,39 @@ static int handle_host_macro(
   }
   // A host macro with a hostgroup name and delimiter.
   else {
-    hostgroup* hg(find_hostgroup(arg1));
-    if (hg) {
-      size_t delimiter_len(strlen(arg2));
+    hostgroup* hg(nullptr);
+    hostgroup_map::const_iterator
+      it{hostgroup::hostgroups.find(arg1)};
+    if (it != hostgroup::hostgroups.end())
+      hg = it->second.get();
 
+    if (hg) {
       // Concatenate macro values for all hostgroup members.
-      for (hostsmember* temp_hostsmember = hg->members;
-           temp_hostsmember != NULL;
-           temp_hostsmember = temp_hostsmember->next) {
-        host* hst(temp_hostsmember->host_ptr);
-        if (hst) {
+      for (host_map_unsafe::iterator
+             it(hg->members.begin()),
+             end(hg->members.end());
+           it != end;
+           ++it) {
+        if (it->second) {
           // Get the macro value for this host.
-          char* buffer(NULL);
-          int free_sub_macro(false);
+          std::string buffer;
+          int free_sub_macro{false};
           grab_standard_host_macro_r(
             mac,
             macro_type,
-            hst,
-            &buffer,
+            it->second,
+            buffer,
             &free_sub_macro);
-          if (buffer) {
-            // Add macro value to already running macro.
-            if (*output == NULL)
-              *output = string::dup(buffer);
-            else {
-              *output
-                = resize_string(
-                    *output,
-                    strlen(*output) + strlen(buffer) + delimiter_len + 1);
-              strcat(*output, arg2);
-              strcat(*output, buffer);
-            }
-            if (free_sub_macro == true)
-              delete[] buffer;
-            *free_macro = true;
+
+          // Add macro value to already running macro.
+          if (output.empty())
+            output = buffer;
+          else {
+            output.append(arg2);
+            output.append(buffer);
           }
+
+          *free_macro = true;
         }
       }
       retval = OK;
@@ -116,7 +124,7 @@ static int handle_host_macro(
     else
       retval = ERROR;
   }
-  return (retval);
+  return retval;
 }
 
 /**
@@ -135,9 +143,9 @@ static int handle_host_macro(
 static int handle_hostgroup_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   (void)arg2;
 
@@ -146,7 +154,16 @@ static int handle_hostgroup_macro(
 
   // Use the saved hostgroup pointer
   // or find the hostgroup for on-demand macros.
-  hostgroup* hg(arg1 ? find_hostgroup(arg1) : mac->hostgroup_ptr);
+  hostgroup* hg(nullptr);
+  if (!arg1.empty()) {
+    hostgroup_map::const_iterator
+      it(hostgroup::hostgroups.find(arg1));
+    if(it != hostgroup::hostgroups.end())
+      hg = it->second.get();
+  }
+  else
+    hg = mac->hostgroup_ptr;
+
   if (hg) {
     // Get the hostgroup macro value.
     retval = grab_standard_hostgroup_macro_r(
@@ -159,7 +176,7 @@ static int handle_hostgroup_macro(
   }
   else
     retval = ERROR;
-  return (retval);
+  return retval;
 }
 
 /**
@@ -177,15 +194,15 @@ static int handle_hostgroup_macro(
 static int handle_service_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   // Return value.
   int retval;
 
   // Use saved service pointer.
-  if (!arg1 && !arg2) {
+  if (arg1.empty() && arg2.empty()) {
     if (!mac->service_ptr)
       retval = ERROR;
     else
@@ -199,78 +216,68 @@ static int handle_service_macro(
   // Else and ondemand macro...
   else {
     // If first arg is blank, it means use the current host name.
-    if (!arg1 || (arg1[0] == '\0')) {
+    if (arg1.empty()) {
       if (!mac->host_ptr)
         retval = ERROR;
-      else if (arg2) {
-        service* svc(find_service(mac->host_ptr->name, arg2));
-        if (!svc)
+      else if (!arg2.empty()) {
+        service_map::const_iterator
+          found(service::services.find({mac->host_ptr->get_name(), arg2}));
+
+        if (found == service::services.end() || !found->second)
           retval = ERROR;
         else
           // Get the service macro value.
           retval = grab_standard_service_macro_r(
                      mac,
                      macro_type,
-                     svc,
+                     found->second.get(),
                      output,
                      free_macro);
       }
       else
         retval = ERROR;
     }
-    else if (arg1 && arg2) {
+    else if (!arg1.empty() && !arg2.empty()) {
       // On-demand macro with both host and service name.
-      service* svc(find_service(arg1, arg2));
-      if (svc)
+      service_map::const_iterator
+        found(service::services.find({arg1, arg2}));
+
+      if (found == service::services.end() || !found->second)
         // Get the service macro value.
         retval = grab_standard_service_macro_r(
                    mac,
                    macro_type,
-                   svc,
+                   found->second.get(),
                    output,
                    free_macro);
       // Else we have a service macro with a
       // servicegroup name and a delimiter...
       else {
-        servicegroup* sg(find_servicegroup(arg1));
-        if (!sg)
+        servicegroup_map::const_iterator sg_it{servicegroup::servicegroups.find(arg1)};
+        if (sg_it == servicegroup::servicegroups.end() || !sg_it->second)
           retval = ERROR;
         else {
-          size_t delimiter_len(strlen(arg2));
-
           // Concatenate macro values for all servicegroup members.
-          for (servicesmember* temp_servicesmember = sg->members;
-               temp_servicesmember != NULL;
-               temp_servicesmember = temp_servicesmember->next) {
-            svc = temp_servicesmember->service_ptr;
-            if (svc) {
+          for (service_map_unsafe::iterator
+                 it(sg_it->second->members.begin()),
+                 end(sg_it->second->members.end());
+               it != end;
+               ++it) {
+            if (it->second != nullptr) {
               // Get the macro value for this service.
-              char* buffer(NULL);
+              std::string buffer;
               int free_sub_macro(false);
               grab_standard_service_macro_r(
                 mac,
                 macro_type,
-                svc,
-                &buffer,
+                it->second,
+                buffer,
                 &free_sub_macro);
-              if (buffer) {
-                // Add macro value to already running macro.
-                if (*output == NULL)
-                  *output = string::dup(buffer);
-                else {
-                  *output = resize_string(
-                              *output,
-                              strlen(*output)
-                              + strlen(buffer)
-                              + delimiter_len
-                              + 1);
-                  strcat(*output, arg2);
-                  strcat(*output, buffer);
-                }
-                if (free_sub_macro != false) {
-                  delete[] buffer;
-                  buffer = NULL;
-                }
+              if (output.empty())
+                output = buffer;
+              else {
+                output.append(arg2);
+                output.append(buffer);
               }
             }
           }
@@ -282,7 +289,7 @@ static int handle_service_macro(
     else
       retval = ERROR;
   }
-  return (retval);
+  return retval;
 }
 
 /**
@@ -301,9 +308,9 @@ static int handle_service_macro(
 static int handle_servicegroup_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   (void)arg2;
 
@@ -312,21 +319,21 @@ static int handle_servicegroup_macro(
 
   // Use the saved servicegroup pointer
   // or find the servicegroup for on-demand macros.
-  servicegroup* sg(arg1 ? find_servicegroup(arg1) : mac->servicegroup_ptr);
-  if (!sg)
+  servicegroup_map::const_iterator sg_it{servicegroup::servicegroups.find(arg1)};
+  if (sg_it == servicegroup::servicegroups.end() || !sg_it->second)
     retval = ERROR;
   else {
     // Get the servicegroup macro value.
     retval = grab_standard_servicegroup_macro_r(
                mac,
                macro_type,
-               sg,
+               sg_it->second.get(),
                output);
     if (OK == retval)
       *free_macro = true;
   }
 
-  return (retval);
+  return retval;
 }
 
 /**
@@ -345,68 +352,65 @@ static int handle_servicegroup_macro(
 static int handle_contact_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   // Return value.
   int retval;
 
-  if (arg2 == NULL) {
+  if (arg2.empty()) {
+    contact *cnct;
     // Find the contact for on-demand macros
     // or use saved contact pointer.
-    contact* cntct(arg1 ? find_contact(arg1) : mac->contact_ptr);
-    if (!cntct)
-      retval = ERROR;
-    else {
+    if (!arg1.empty()) {
+      contact_map::const_iterator ct_it{contact::contacts.find(arg1)};
+      if (ct_it == contact::contacts.end())
+        return ERROR;
+      cnct = ct_it->second.get();
+    } else
+      cnct = mac->contact_ptr;
+
+    if (!cnct)
+      return ERROR;
+
       // Get the contact macro value.
-      retval = grab_standard_contact_macro_r(
-                 mac,
-                 macro_type,
-                 cntct,
-                 output);
-      if (OK == retval)
-        *free_macro = true;
-    }
+    retval = grab_standard_contact_macro_r(
+      mac,
+      macro_type,
+      cnct,
+      output);
+
+    if (OK == retval)
+      *free_macro = true;
   }
   // A contact macro with a contactgroup name and delimiter.
-  else if (arg1 && arg2) {
-    contactgroup* cg(find_contactgroup(arg1));
-    if (!cg)
+  else if (!arg1.empty() && !arg2.empty()) {
+    contactgroup_map::iterator cg{contactgroup::contactgroups.find(arg1)};
+    if (cg == contactgroup::contactgroups.end() || !cg->second)
       retval = ERROR;
     else {
-      size_t delimiter_len(strlen(arg2));
-
       // Concatenate macro values for all contactgroup members.
-      for (contactsmember* temp_contactsmember = cg->members;
-           temp_contactsmember != NULL;
-           temp_contactsmember = temp_contactsmember->next) {
-        contact* cntct(temp_contactsmember->contact_ptr);
-        if (cntct) {
+      for(contact_map_unsafe::const_iterator
+            it{cg->second->get_members().begin()},
+            end{cg->second->get_members().end()};
+            it != end; ++it) {
+        if (it->second) {
           // Get the macro value for this contact.
-          char* buffer(NULL);
+          std::string buffer;
           grab_standard_contact_macro_r(
             mac,
             macro_type,
-            cntct,
-            &buffer);
-          if (buffer) {
-            // Add macro value to already running macro.
-            if (*output == NULL)
-              *output = string::dup(buffer);
-            else {
-              *output = resize_string(
-                          *output,
-                          strlen(*output)
-                          + strlen(buffer)
-                          + delimiter_len
-                          + 1);
-              strcat(*output, arg2);
-              strcat(*output, buffer);
-            }
-            delete[] buffer;
-            buffer = NULL;
+            it->second,
+            buffer);
+          // Add macro value to already running macro.
+          if (output.empty())
+            output = buffer;
+          else {
+            output.append(arg2);
+            output.append(buffer);
           }
+
         }
       }
       *free_macro = true;
@@ -415,7 +419,7 @@ static int handle_contact_macro(
   }
   else
     retval = ERROR;
-  return (retval);
+  return retval;
 }
 
 /**
@@ -434,9 +438,9 @@ static int handle_contact_macro(
 static int handle_contactgroup_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   (void)arg2;
 
@@ -445,7 +449,11 @@ static int handle_contactgroup_macro(
 
   // Use the saved contactgroup pointer.
   // or find the contactgroup for on-demand macros.
-  contactgroup* cg(arg1 ? find_contactgroup(arg1) : mac->contactgroup_ptr);
+  contactgroup* cg{nullptr};
+  contactgroup_map::iterator cg_it{contactgroup::contactgroups.find(arg1)};
+  if (cg_it == contactgroup::contactgroups.end() || !cg_it->second)
+    cg = mac->contactgroup_ptr;
+
   if (!cg)
     retval = ERROR;
   else {
@@ -455,7 +463,7 @@ static int handle_contactgroup_macro(
       *free_macro = true;
   }
 
-  return (retval);
+  return retval;
 }
 
 /**
@@ -473,18 +481,18 @@ static int handle_contactgroup_macro(
 static int handle_notification_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   (void)arg1;
   (void)arg2;
 
   // Notification macros have already been pre-computed.
-  *output = mac->x[macro_type];
+  output = mac->x[macro_type];
   *free_macro = false;
 
-  return (OK);
+  return OK;
 }
 
 /**
@@ -503,9 +511,9 @@ static int handle_notification_macro(
 static int handle_datetime_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   // Calculate macros.
   int retval(grab_datetime_macro_r(
@@ -516,7 +524,7 @@ static int handle_datetime_macro(
                output));
   if (OK == retval)
     *free_macro = true;
-  return (retval);
+  return retval;
 }
 
 /**
@@ -534,18 +542,18 @@ static int handle_datetime_macro(
 static int handle_static_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string& output,
              int* free_macro) {
   (void)mac;
   (void)arg1;
   (void)arg2;
 
   // No need to do any more work - these are already precomputed for us.
-  *output = get_global_macros()->x[macro_type];
+  output = get_global_macros()->x[macro_type];
   *free_macro = false;
-  return (OK);
+  return OK;
 }
 
 /**
@@ -564,15 +572,15 @@ static int handle_static_macro(
 static int handle_summary_macro(
              nagios_macros* mac,
              int macro_type,
-             char const* arg1,
-             char const* arg2,
-             char** output,
+             std::string const& arg1,
+             std::string const& arg2,
+             std::string &output,
              int* free_macro) {
   (void)arg1;
   (void)arg2;
 
   // Generate summary macros if needed.
-  if (!mac->x[MACRO_TOTALHOSTSUP]) {
+  if (mac->x[MACRO_TOTALHOSTSUP].empty()) {
     // Get host totals.
     unsigned int host_problems(0);
     unsigned int host_problems_unhandled(0);
@@ -581,36 +589,38 @@ static int handle_summary_macro(
     unsigned int hosts_unreachable(0);
     unsigned int hosts_unreachable_unhandled(0);
     unsigned int hosts_up(0);
-    for (host* temp_host = host_list;
-         temp_host != NULL;
-         temp_host = temp_host->next) {
+    for (host_map::iterator
+           it(com::centreon::engine::host::hosts.begin()),
+           end(com::centreon::engine::host::hosts.end());
+         it != end;
+         ++it) {
       // Filter totals based on contact if necessary.
       bool authorized(
              mac->contact_ptr
-             ? is_contact_for_host(temp_host, mac->contact_ptr)
+             ? is_contact_for_notifier(it->second.get(), mac->contact_ptr)
              : true);
       if (authorized) {
         bool problem(true);
-        if ((temp_host->current_state == HOST_UP)
-            && (temp_host->has_been_checked == true))
+        if ((it->second->get_current_state() == host::state_up)
+            && it->second->get_has_been_checked())
           hosts_up++;
-        else if (temp_host->current_state == HOST_DOWN) {
-          if (temp_host->scheduled_downtime_depth > 0)
+        else if (it->second->get_current_state() == host::state_down) {
+          if (it->second->get_scheduled_downtime_depth() > 0)
             problem = false;
-          if (temp_host->problem_has_been_acknowledged == true)
+          if (it->second->get_problem_has_been_acknowledged())
             problem = false;
-          if (temp_host->checks_enabled == false)
+          if (!it->second->get_checks_enabled())
             problem = false;
           if (problem)
             hosts_down_unhandled++;
           hosts_down++;
         }
-        else if (temp_host->current_state == HOST_UNREACHABLE) {
-          if (temp_host->scheduled_downtime_depth > 0)
+        else if (it->second->get_current_state() == host::state_unreachable) {
+          if (it->second->get_scheduled_downtime_depth() > 0)
             problem = false;
-          if (temp_host->problem_has_been_acknowledged == true)
+          if (it->second->get_problem_has_been_acknowledged())
             problem = false;
-          if (temp_host->checks_enabled == false)
+          if (!it->second->get_checks_enabled())
             problem = false;
           if (problem)
             hosts_down_unhandled++;
@@ -632,64 +642,79 @@ static int handle_summary_macro(
     unsigned int services_unknown_unhandled(0);
     unsigned int services_warning(0);
     unsigned int services_warning_unhandled(0);
-    for (service* temp_service = service_list;
-         temp_service != NULL;
-         temp_service = temp_service->next) {
+
+    for (service_map::iterator
+           it(service::services.begin()),
+           end(service::services.end());
+         it != end;
+         ++it) {
       // Filter totals based on contact if necessary.
       bool authorized(
              mac->contact_ptr
-             ? is_contact_for_service(
-                 temp_service,
+             ? is_contact_for_notifier(
+                 it->second.get(),
                  mac->contact_ptr)
              : true);
       if (authorized) {
         bool problem(true);
-        if (temp_service->current_state == STATE_OK
-            && temp_service->has_been_checked == true)
+        if (it->second->get_current_state() == service::state_ok
+            && it->second->get_has_been_checked())
           services_ok++;
-        else if (temp_service->current_state == STATE_WARNING) {
-          host* temp_host(find_host(temp_service->host_name));
-          if (temp_host != NULL
-              && (temp_host->current_state == HOST_DOWN
-                  || temp_host->current_state == HOST_UNREACHABLE))
+        else if (it->second->get_current_state() == service::state_warning) {
+          host* temp_host{nullptr};
+          host_map::const_iterator found(host::hosts.find(it->second->get_hostname()));
+          if (found != host::hosts.end())
+              temp_host = found->second.get();
+
+          if (temp_host != nullptr
+              && (temp_host->get_current_state() == host::state_down
+                  || temp_host->get_current_state() == host::state_unreachable))
             problem = false;
-          if (temp_service->scheduled_downtime_depth > 0)
+          if (it->second->get_scheduled_downtime_depth() > 0)
             problem = false;
-          if (temp_service->problem_has_been_acknowledged == true)
+          if (it->second->get_problem_has_been_acknowledged())
             problem = false;
-          if (temp_service->checks_enabled == false)
+          if (!it->second->get_checks_enabled())
             problem = false;
           if (problem)
             services_warning_unhandled++;
           services_warning++;
         }
-        else if (temp_service->current_state == STATE_UNKNOWN) {
-          host* temp_host(find_host(temp_service->host_name));
-          if (temp_host != NULL
-              && (temp_host->current_state == HOST_DOWN
-                  || temp_host->current_state == HOST_UNREACHABLE))
+        else if (it->second->get_current_state() == service::state_unknown) {
+          host* temp_host{nullptr};
+          host_map::const_iterator found(host::hosts.find(it->second->get_hostname()));
+          if (found != host::hosts.end())
+            temp_host = found->second.get();
+
+          if (temp_host != nullptr
+              && (temp_host->get_current_state() == host::state_down
+                  || temp_host->get_current_state() == host::state_unreachable))
             problem = false;
-          if (temp_service->scheduled_downtime_depth > 0)
+          if (it->second->get_scheduled_downtime_depth() > 0)
             problem = false;
-          if (temp_service->problem_has_been_acknowledged == true)
+          if (it->second->get_problem_has_been_acknowledged())
             problem = false;
-          if (temp_service->checks_enabled == false)
+          if (!it->second->get_checks_enabled())
             problem = false;
           if (problem)
             services_unknown_unhandled++;
           services_unknown++;
         }
-        else if (temp_service->current_state == STATE_CRITICAL) {
-          host* temp_host(find_host(temp_service->host_name));
-          if (temp_host != NULL
-              && (temp_host->current_state == HOST_DOWN
-                  || temp_host->current_state == HOST_UNREACHABLE))
+        else if (it->second->get_current_state() == service::state_critical) {
+          host* temp_host{nullptr};
+          host_map::const_iterator found(host::hosts.find(it->second->get_hostname()));
+          if (found != host::hosts.end())
+            temp_host = found->second.get();
+
+          if (temp_host != nullptr
+              && (temp_host->get_current_state() == host::state_down
+                  || temp_host->get_current_state() == host::state_unreachable))
             problem = false;
-          if (temp_service->scheduled_downtime_depth > 0)
+          if (it->second->get_scheduled_downtime_depth() > 0)
             problem = false;
-          if (temp_service->problem_has_been_acknowledged == true)
+          if (it->second->get_problem_has_been_acknowledged())
             problem = false;
-          if (temp_service->checks_enabled == false)
+          if (!it->second->get_checks_enabled())
             problem = false;
           if (problem)
             services_critical_unhandled++;
@@ -705,32 +730,32 @@ static int handle_summary_macro(
       + services_unknown_unhandled;
 
     // These macros are time-intensive to compute, and will likely be
-    // used together, so save them all for future use.
-    string::setstr(mac->x[MACRO_TOTALHOSTSUP], hosts_up);
-    string::setstr(mac->x[MACRO_TOTALHOSTSDOWN], hosts_down);
-    string::setstr(mac->x[MACRO_TOTALHOSTSUNREACHABLE], hosts_unreachable);
-    string::setstr(mac->x[MACRO_TOTALHOSTSDOWNUNHANDLED], hosts_down_unhandled);
-    string::setstr(mac->x[MACRO_TOTALHOSTSUNREACHABLEUNHANDLED], hosts_unreachable_unhandled);
-    string::setstr(mac->x[MACRO_TOTALHOSTPROBLEMS], host_problems);
-    string::setstr(mac->x[MACRO_TOTALHOSTPROBLEMSUNHANDLED], host_problems_unhandled);
-    string::setstr(mac->x[MACRO_TOTALSERVICESOK], services_ok);
-    string::setstr(mac->x[MACRO_TOTALSERVICESWARNING], services_warning);
-    string::setstr(mac->x[MACRO_TOTALSERVICESCRITICAL], services_critical);
-    string::setstr(mac->x[MACRO_TOTALSERVICESUNKNOWN], services_unknown);
-    string::setstr(mac->x[MACRO_TOTALSERVICESWARNINGUNHANDLED], services_warning_unhandled);
-    string::setstr(mac->x[MACRO_TOTALSERVICESCRITICALUNHANDLED], services_critical_unhandled);
-    string::setstr(mac->x[MACRO_TOTALSERVICESUNKNOWNUNHANDLED], services_unknown_unhandled);
-    string::setstr(mac->x[MACRO_TOTALSERVICEPROBLEMS], service_problems);
-    string::setstr(mac->x[MACRO_TOTALSERVICEPROBLEMSUNHANDLED], service_problems_unhandled);
+    //r, so save them all for future use.
+    mac->x[MACRO_TOTALHOSTSUP] = hosts_up;
+    mac->x[MACRO_TOTALHOSTSDOWN] = hosts_down;
+    mac->x[MACRO_TOTALHOSTSUNREACHABLE] = hosts_unreachable;
+    mac->x[MACRO_TOTALHOSTSDOWNUNHANDLED] = hosts_down_unhandled;
+    mac->x[MACRO_TOTALHOSTSUNREACHABLEUNHANDLED] = hosts_unreachable_unhandled;
+    mac->x[MACRO_TOTALHOSTPROBLEMS] = host_problems;
+    mac->x[MACRO_TOTALHOSTPROBLEMSUNHANDLED] = host_problems_unhandled;
+    mac->x[MACRO_TOTALSERVICESOK] = services_ok;
+    mac->x[MACRO_TOTALSERVICESWARNING] = services_warning;
+    mac->x[MACRO_TOTALSERVICESCRITICAL] = services_critical;
+    mac->x[MACRO_TOTALSERVICESUNKNOWN] = services_unknown;
+    mac->x[MACRO_TOTALSERVICESWARNINGUNHANDLED] = services_warning_unhandled;
+    mac->x[MACRO_TOTALSERVICESCRITICALUNHANDLED] = services_critical_unhandled;
+    mac->x[MACRO_TOTALSERVICESUNKNOWNUNHANDLED] = services_unknown_unhandled;
+    mac->x[MACRO_TOTALSERVICEPROBLEMS] = service_problems;
+    mac->x[MACRO_TOTALSERVICEPROBLEMSUNHANDLED] = service_problems_unhandled;
   }
 
   // Return only the macro the user requested.
-  *output = mac->x[macro_type];
+  output = mac->x[macro_type];
 
   // Tell caller to NOT free memory when done.
   *free_macro = false;
 
-  return (OK);
+  return OK;
 }
 
 /**************************************
@@ -741,7 +766,7 @@ static int handle_summary_macro(
 
 // Redirection object.
 struct grab_value_redirection {
-  typedef umap<unsigned int, int (*)(nagios_macros*, int, char const*, char const*, char**, int*)> entry;
+  typedef std::unordered_map<unsigned int, int (*)(nagios_macros*, int, std::string const&, std::string const&, std::string&, int*)> entry;
   entry routines;
   grab_value_redirection() {
     // Host macros.
@@ -997,41 +1022,27 @@ extern "C" {
 /* this is the big one */
 int grab_macro_value_r(
       nagios_macros* mac,
-      char* macro_buffer,
-      char** output,
+      std::string const& macro_name,
+      std::string& output,
       int* clean_options,
       int* free_macro) {
-  char* buf = NULL;
-  char* ptr = NULL;
-  char* macro_name = NULL;
-  char* arg[2] = { NULL, NULL };
-  contact* temp_contact = NULL;
-  contactgroup* temp_contactgroup = NULL;
-  contactsmember* temp_contactsmember = NULL;
-  char* temp_buffer = NULL;
-  int delimiter_len = 0;
+  char* buf = nullptr;
+  char* ptr = nullptr;
+  char* arg[2] = { nullptr, nullptr };
+  contact* temp_contact = nullptr;
+  std::string temp_buffer;
   unsigned int x;
   int result = OK;
 
-  if (output == NULL)
-    return (ERROR);
-
-  /* clear the old macro value */
-  delete[] *output;
-  *output = NULL;
-
-  if (macro_buffer == NULL || clean_options == NULL
-      || free_macro == NULL)
-    return (ERROR);
+  if (macro_name.empty() || clean_options == nullptr
+      || free_macro == nullptr)
+    return ERROR;
 
   /* work with a copy of the original buffer */
-  buf = string::dup(macro_buffer);
+  buf = string::dup(macro_name.c_str());
 
   /* BY DEFAULT, TELL CALLER TO FREE MACRO BUFFER WHEN DONE */
   *free_macro = true;
-
-  /* macro name is at start of buffer */
-  macro_name = buf;
 
   /* see if there's an argument - if so, this is most likely an on-demand macro */
   if ((ptr = strchr(buf, ':'))) {
@@ -1054,10 +1065,10 @@ int grab_macro_value_r(
   /***** X MACROS *****/
   /* see if this is an x macro */
   for (x = 0; x < MACRO_X_COUNT; x++) {
-    if (macro_x_names[x] == NULL)
+    if (macro_x_names[x].empty())
       continue;
 
-    if (!strcmp(macro_name, macro_x_names[x])) {
+    if (macro_x_names[x] == macro_name) {
       logger(dbg_macros, most)
         << "  macros[" << x << "] (" << macro_x_names[x] << ") match.";
 
@@ -1065,8 +1076,8 @@ int grab_macro_value_r(
       result = grab_macrox_value_r(
                  mac,
                  x,
-                 arg[0],
-                 arg[1],
+                 arg[0] ? arg[0] : "",
+                 arg[1] ? arg[1] : "",
                  output,
                  free_macro);
 
@@ -1094,46 +1105,46 @@ int grab_macro_value_r(
   if (x < MACRO_X_COUNT)
     ;
   /***** ARGV MACROS *****/
-  else if (strstr(macro_name, "ARG") == macro_name) {
+  else if (macro_name.size() > 3 && strncmp(macro_name.c_str(), "ARG", 3) == 0) {
     /* which arg do we want? */
-    x = atoi(macro_name + 3);
+    x = atoi(macro_name.c_str() + 3);
 
     if (!x || x > MAX_COMMAND_ARGUMENTS) {
       delete[] buf;
-      return (ERROR);
+      return ERROR;
     }
 
     /* use a pre-computed macro value */
-    *output = mac->argv[x - 1];
+    output = mac->argv[x - 1];
     *free_macro = false;
   }
   /***** USER MACROS *****/
-  else if (strstr(macro_name, "USER") == macro_name) {
+  else if (macro_name.size() > 4 && strncmp(macro_name.c_str(), "USER", 4) == 0) {
     /* which macro do we want? */
-    x = atoi(macro_name + 4);
+    x = atoi(macro_name.c_str() + 4);
 
     if (!x || x > MAX_USER_MACROS) {
       delete[] buf;
-      return (ERROR);
+      return ERROR;
     }
 
     /* use a pre-computed macro value */
-    *output = macro_user[x - 1];
+    output = macro_user[x - 1];
     *free_macro = false;
   }
 
   /***** CONTACT ADDRESS MACROS *****/
   /* NOTE: the code below should be broken out into a separate function */
-  else if (strstr(macro_name, "CONTACTADDRESS") == macro_name) {
+  else if (macro_name.size() > 14 && strncmp(macro_name.c_str(), "CONTACTADDRESS", 14) == 0) {
     /* which address do we want? */
-    x = atoi(macro_name + 14) - 1;
+    x = atoi(macro_name.c_str() + 14) - 1;
 
     /* regular macro */
-    if (arg[0] == NULL) {
+    if (arg[0] == nullptr) {
       /* use the saved pointer */
-      if ((temp_contact = mac->contact_ptr) == NULL) {
+      if ((temp_contact = mac->contact_ptr) == nullptr) {
         delete[] buf;
-        return (ERROR);
+        return ERROR;
       }
 
       /* get the macro value */
@@ -1142,74 +1153,68 @@ int grab_macro_value_r(
     /* on-demand macro */
     else {
       /* on-demand contact macro with a contactgroup and a delimiter */
-      if (arg[1] != NULL) {
-        if ((temp_contactgroup = find_contactgroup(arg[0])) == NULL)
-          return (ERROR);
-
-        delimiter_len = strlen(arg[1]);
+      if (arg[1] != nullptr) {
+        contactgroup_map::iterator cg_it{
+            contactgroup::contactgroups.find(arg[0])};
+        if (cg_it == contactgroup::contactgroups.end() || !cg_it->second)
+          return ERROR;
 
         /* concatenate macro values for all contactgroup members */
-        for (temp_contactsmember = temp_contactgroup->members;
-             temp_contactsmember != NULL;
-             temp_contactsmember = temp_contactsmember->next) {
-
-          if ((temp_contact = temp_contactsmember->contact_ptr) == NULL)
-            continue;
-          if ((temp_contact = find_contact(temp_contactsmember->contact_name)) == NULL)
+        for (contact_map_unsafe::const_iterator
+                 it{cg_it->second->get_members().begin()},
+             end{cg_it->second->get_members().end()};
+             it != end; ++it) {
+          if (!it->second)
             continue;
 
           /* get the macro value for this contact */
-          grab_contact_address_macro(x, temp_contact, &temp_buffer);
+          grab_contact_address_macro(x, it->second, temp_buffer);
 
-          if (temp_buffer == NULL)
+          if (temp_buffer.empty())
             continue;
 
           /* add macro value to already running macro */
-          if (*output == NULL)
-            *output = string::dup(temp_buffer);
+          if (output.empty())
+            output.append(temp_buffer);
           else {
-            *output = resize_string(
-                        *output,
-                        strlen(*output)
-                        + strlen(temp_buffer)
-                        + delimiter_len
-                        + 1);
-            strcat(*output, arg[1]);
-            strcat(*output, temp_buffer);
+            output.append(arg[1]);
+            output.append(temp_buffer);
           }
-          delete[] temp_buffer;
-          temp_buffer = NULL;
+          temp_buffer = "";
         }
       }
       /* else on-demand contact macro */
       else {
         /* find the contact */
-        if ((temp_contact = find_contact(arg[0])) == NULL) {
+        contact_map::const_iterator
+          it{contact::contacts.find(arg[0])};
+        if (it == contact::contacts.end()) {
           delete[] buf;
-          return (ERROR);
+          return ERROR;
         }
 
         /* get the macro value */
-        result = grab_contact_address_macro(x, temp_contact, output);
+        result = grab_contact_address_macro(x, it->second.get(), output);
       }
     }
   }
   /***** CUSTOM VARIABLE MACROS *****/
   else if (macro_name[0] == '_') {
     /* get the macro value */
+
     result = grab_custom_macro_value_r(
                mac,
                macro_name,
-               arg[0],
-               arg[1],
+               arg[0] ? arg[0] : "",
+               arg[1] ? arg[1] : "",
                output);
   }
   else if (
     configuration::applier::state::instance().user_macros().find(macro_name)
       != configuration::applier::state::instance().user_macros().end()) {
     /*** New style user macros ***/
-    *output = string::dup(
-      configuration::applier::state::instance().user_macros_find(macro_name)->second.c_str());
+    output =
+      configuration::applier::state::instance().user_macros_find(macro_name)->second;
     result = true;
   }
   /* no macro matched... */
@@ -1222,20 +1227,7 @@ int grab_macro_value_r(
 
   /* free memory */
   delete[] buf;
-  return (result);
-}
-
-int grab_macro_value(
-      char* macro_buffer,
-      char** output,
-      int* clean_options,
-      int* free_macro) {
-  return (grab_macro_value_r(
-            get_global_macros(),
-            macro_buffer,
-            output,
-            clean_options,
-            free_macro));
+  return result;
 }
 
 /**
@@ -1254,12 +1246,12 @@ int grab_macro_value(
 int grab_macrox_value_r(
       nagios_macros* mac,
       int macro_type,
-      char const* arg1,
-      char const* arg2,
-      char** output,
+      std::string const& arg1,
+      std::string const& arg2,
+      std::string& output,
       int* free_macro) {
   int retval;
-  if (!mac || !output || !free_macro)
+  if (!mac || !free_macro)
     retval = ERROR;
   else {
     grab_value_redirection::entry::const_iterator it(
@@ -1269,7 +1261,7 @@ int grab_macrox_value_r(
       logger(dbg_macros, basic)
         << "UNHANDLED MACRO #" << macro_type << "! THIS IS A BUG!";
     }
-    else
+    else {
       retval = (*it->second)(
                  mac,
                  macro_type,
@@ -1277,37 +1269,9 @@ int grab_macrox_value_r(
                  arg2,
                  output,
                  free_macro);
+    }
   }
-  return (retval);
-}
-
-/**
- *  Grab a global macro value.
- *
- *  @param[in]  macro_type Macro to get.
- *  @param[in]  arg1       Argument 1.
- *  @param[in]  arg2       Argument 2.
- *  @param[out] output     Output buffer.
- *  @param[out] free_macro Set to true if output buffer must be freed by
- *                         caller.
- *
- *  @return OK on success.
- *
- *  @see grab_macrox_value_r
- */
-int grab_macrox_value(
-      int macro_type,
-      char const* arg1,
-      char const* arg2,
-      char** output,
-      int* free_macro) {
-  return (grab_macrox_value_r(
-            get_global_macros(),
-            macro_type,
-            arg1,
-            arg2,
-            output,
-            free_macro));
+  return retval;
 }
 
 }

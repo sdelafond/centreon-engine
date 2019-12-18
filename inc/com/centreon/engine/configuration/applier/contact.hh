@@ -20,7 +20,6 @@
 #ifndef CCE_CONFIGURATION_APPLIER_CONTACT_HH
 #  define CCE_CONFIGURATION_APPLIER_CONTACT_HH
 
-#  include <set>
 #  include "com/centreon/engine/namespace.hh"
 
 CCE_BEGIN()
@@ -34,14 +33,15 @@ namespace             configuration {
     class             contact {
      public:
                       contact();
-                      contact(contact const& right);
                       ~contact() throw ();
-      contact&        operator=(contact const& right);
       void            add_object(configuration::contact const& obj);
       void            expand_objects(configuration::state& s);
       void            modify_object(configuration::contact const& obj);
       void            remove_object(configuration::contact const& obj);
       void            resolve_object(configuration::contact const& obj);
+     private:
+                      contact(contact const& right);
+      contact&        operator=(contact const& right);
     };
   }
 }

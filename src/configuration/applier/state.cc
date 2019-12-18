@@ -1,5 +1,5 @@
 /*
-** Copyright 2011-2013,2015-2017 Centreon
+** Copyright 2011-2019 Centreon
 **
 ** This file is part of Centreon Engine.
 **
@@ -17,7 +17,11 @@
 ** <http://www.gnu.org/licenses/>.
 */
 
+#include "com/centreon/engine/configuration/applier/state.hh"
 #include <unistd.h>
+#include <array>
+#include <cassert>
+#include <unordered_map>
 #include "com/centreon/concurrency/locker.hh"
 #include "com/centreon/engine/broker.hh"
 #include "com/centreon/engine/commands/connector.hh"
@@ -38,7 +42,6 @@
 #include "com/centreon/engine/configuration/applier/servicedependency.hh"
 #include "com/centreon/engine/configuration/applier/serviceescalation.hh"
 #include "com/centreon/engine/configuration/applier/servicegroup.hh"
-#include "com/centreon/engine/configuration/applier/state.hh"
 #include "com/centreon/engine/configuration/applier/timeperiod.hh"
 #include "com/centreon/engine/configuration/command.hh"
 #include "com/centreon/engine/error.hh"
@@ -58,7 +61,7 @@ using namespace com::centreon::engine::configuration;
 using namespace com::centreon::engine::logging;
 
 static bool            has_already_been_loaded(false);
-static applier::state* _instance(NULL);
+static applier::state* _instance(nullptr);
 
 /**
  *  Apply new configuration.
@@ -66,11 +69,11 @@ static applier::state* _instance(NULL);
  *  @param[in] new_cfg        The new configuration.
  *  @param[in] waiting_thread True to wait thread after calulate differencies.
  */
-void applier::state::apply(configuration::state& new_cfg, bool waiting_thread) {
+void applier::state::apply(configuration::state& new_cfg) {
   configuration::state save(*config);
   try {
     _processing_state = state_ready;
-    _processing(new_cfg, waiting_thread);
+    _processing(new_cfg);
   }
   catch (std::exception const& e) {
     // If is the first time to load configuration, we don't
@@ -86,16 +89,9 @@ void applier::state::apply(configuration::state& new_cfg, bool waiting_thread) {
     if (_processing_state == state_error) {
       logger(dbg_config, more)
         << "configuration: try to restore old configuration";
-      _processing(save, waiting_thread);
+      _processing(save);
     }
   }
-
-  // wake up waiting thread.
-  if (waiting_thread) {
-    concurrency::locker lock(&_lock);
-    _cv_lock.wake_one();
-  }
-  return ;
 }
 
 /**
@@ -103,16 +99,14 @@ void applier::state::apply(configuration::state& new_cfg, bool waiting_thread) {
  *
  *  @param[in] new_cfg        The new configuration.
  *  @param[in] state          The retention to use.
- *  @param[in] waiting_thread True to wait thread after calulate differencies.
  */
 void applier::state::apply(
        configuration::state& new_cfg,
-       retention::state& state,
-       bool waiting_thread) {
+       retention::state& state) {
   configuration::state save(*config);
   try {
     _processing_state = state_ready;
-    _processing(new_cfg, waiting_thread, &state);
+    _processing(new_cfg, &state);
   }
   catch (std::exception const& e) {
     // If is the first time to load configuration, we don't
@@ -128,16 +122,9 @@ void applier::state::apply(
     if (_processing_state == state_error) {
       logger(dbg_config, more)
         << "configuration: try to restore old configuration";
-      _processing(save, waiting_thread, &state);
+      _processing(save, &state);
     }
   }
-
-  // wake up waiting thread.
-  if (waiting_thread) {
-    concurrency::locker lock(&_lock);
-    _cv_lock.wake_one();
-  }
-  return ;
 }
 
 /**
@@ -146,7 +133,8 @@ void applier::state::apply(
  *  @return Singleton instance.
  */
 applier::state& applier::state::instance() {
-  return (*_instance);
+  assert(_instance);
+  return *_instance;
 }
 
 /**
@@ -156,7 +144,6 @@ void applier::state::load() {
   if (!_instance) {
     _instance = new applier::state;
   }
-  return ;
 }
 
 /**
@@ -164,15 +151,14 @@ void applier::state::load() {
  */
 void applier::state::unload() {
   delete _instance;
-  _instance = NULL;
-  return ;
+  _instance = nullptr;
 }
 
 /**
  *  Default constructor.
  */
 applier::state::state()
-  : _config(NULL),
+  : _config(nullptr),
     _processing_state(state_ready) {
   applier::logging::load();
   applier::globals::load();
@@ -184,6 +170,24 @@ applier::state::state()
  *  Destructor.
  */
 applier::state::~state() throw() {
+  engine::contact::contacts.clear();
+  engine::contactgroup::contactgroups.clear();
+  engine::servicegroup::servicegroups.clear();
+  engine::hostgroup::hostgroups.clear();
+  engine::commands::command::commands.clear();
+  engine::commands::connector::connectors.clear();
+  engine::service::services.clear();
+  engine::service::services_by_id.clear();
+  engine::servicedependency::servicedependencies.clear();
+  engine::serviceescalation::serviceescalations.clear();
+  engine::host::hosts.clear();
+  engine::host::hosts_by_id.clear();
+  engine::hostdependency::hostdependencies.clear();
+  engine::hostescalation::hostescalations.clear();
+  engine::timeperiod::timeperiods.clear();
+  engine::comment::comments.clear();
+  engine::comment::set_next_comment_id(1llu);
+
   xpddefault_cleanup_performance_data();
   applier::scheduler::unload();
   applier::macros::unload();
@@ -192,752 +196,12 @@ applier::state::~state() throw() {
 }
 
 /**
- *  Get the current commands.
- *
- *  @return The current commands.
- */
-umap<std::string, shared_ptr<command_struct> > const& applier::state::commands() const throw () {
-  return (_commands);
-}
-
-/**
- *  Get the current commands.
- *
- *  @return The current commands.
- */
-umap<std::string, shared_ptr<command_struct> >& applier::state::commands() throw () {
-  return (_commands);
-}
-
-/**
- *  Find a command from its key.
- *
- *  @param[in] k Command name.
- *
- *  @return Iterator to the element if found, commands().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<command_struct> >::const_iterator applier::state::commands_find(configuration::command::key_type const& k) const {
-  return (_commands.find(k));
-}
-
-/**
- *  Find a command from its key.
- *
- *  @param[in] k Command name.
- *
- *  @return Iterator to the element if found, commands().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<command_struct> >::iterator applier::state::commands_find(configuration::command::key_type const& k) {
-  return (_commands.find(k));
-}
-
-/**
- *  Find a connector from its key.
- *
- *  @param[in] k Connector name.
- *
- *  @return Iterator to the element if found, connectors().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<commands::connector> >::const_iterator applier::state::connectors_find(configuration::connector::key_type const& k) const {
-  return (_connectors.find(k));
-}
-
-/**
- *  Find a connector from its key.
- *
- *  @param[in] k Connector name.
- *
- *  @return Iterator to the element if found, connectors().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<commands::connector> >::iterator applier::state::connectors_find(configuration::connector::key_type const& k) {
-  return (_connectors.find(k));
-}
-
-/**
- *  Get the current connectors.
- *
- *  @return The current connectors.
- */
-umap<std::string, shared_ptr<commands::connector> > const& applier::state::connectors() const throw () {
-  return (_connectors);
-}
-
-/**
- *  Get the current connectors.
- *
- *  @return The current connectors.
- */
-umap<std::string, shared_ptr<commands::connector> >& applier::state::connectors() throw () {
-  return (_connectors);
-}
-
-/**
- *  Get the current contacts.
- *
- *  @return The current contacts.
- */
-umap<std::string, shared_ptr<contact_struct> > const& applier::state::contacts() const throw () {
-  return (_contacts);
-}
-
-/**
- *  Get the current contacts.
- *
- *  @return The current contacts.
- */
-umap<std::string, shared_ptr<contact_struct> >& applier::state::contacts() throw () {
-  return (_contacts);
-}
-
-/**
- *  Find a contact from its key.
- *
- *  @param[in] k Contact name.
- *
- *  @return Iterator to the element if found, contacts().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<contact_struct> >::const_iterator applier::state::contacts_find(configuration::contact::key_type const& k) const {
-  return (_contacts.find(k));
-}
-
-/**
- *  Find a contact from its key.
- *
- *  @param[in] k Contact name.
- *
- *  @return Iterator to the element if found, contacts().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<contact_struct> >::iterator applier::state::contacts_find(configuration::contact::key_type const& k) {
-  return (_contacts.find(k));
-}
-
-/**
- *  Get the current contactgroups.
- *
- *  @return The current contactgroups.
- */
-umap<std::string, shared_ptr<contactgroup_struct> > const& applier::state::contactgroups() const throw () {
-  return (_contactgroups);
-}
-
-/**
- *  Get the current contactgroups.
- *
- *  @return The current contactgroups.
- */
-umap<std::string, shared_ptr<contactgroup_struct> >& applier::state::contactgroups() throw () {
-  return (_contactgroups);
-}
-
-/**
- *  Find a contact group from its key.
- *
- *  @param[in] k Contact group key.
- *
- *  @return Iterator to the element if found, contactgroups().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<contactgroup_struct> >::const_iterator applier::state::contactgroups_find(configuration::contactgroup::key_type const& k) const {
-  return (_contactgroups.find(k));
-}
-
-/**
- *  Find a contact group from its key.
- *
- *  @param[in] k Contact group key.
- *
- *  @return Iterator to the element if found, contactgroups().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<contactgroup_struct> >::iterator applier::state::contactgroups_find(configuration::contactgroup::key_type const& k) {
-  return (_contactgroups.find(k));
-}
-
-/**
- *  Get the current hosts.
- *
- *  @return The current hosts.
- */
-umap<std::string, shared_ptr<host_struct> > const& applier::state::hosts() const throw () {
-  return (_hosts);
-}
-
-/**
- *  Get the current hosts.
- *
- *  @return The current hosts.
- */
-umap<std::string, shared_ptr<host_struct> >& applier::state::hosts() throw () {
-  return (_hosts);
-}
-
-/**
- *  Find a host from its key.
- *
- *  @param[in] k Host key (host name).
- *
- *  @return Iterator to the host object if found, hosts().end() if it
- *          was not.
- */
-umap<std::string, shared_ptr<host_struct> >::const_iterator applier::state::hosts_find(configuration::host::key_type const& k) const {
-  return (_hosts.find(k));
-}
-
-/**
- *  Find a host from its key.
- *
- *  @param[in] k Host key (host name).
- *
- *  @return Iterator to the host object if found, hosts().end() if it
- *          was not.
- */
-umap<std::string, shared_ptr<host_struct> >::iterator applier::state::hosts_find(configuration::host::key_type const& k) {
-  return (_hosts.find(k));
-}
-
-/**
- *  Get the current hostdependencies.
- *
- *  @return The current hostdependencies.
- */
-umultimap<std::string, shared_ptr<hostdependency_struct> > const& applier::state::hostdependencies() const throw () {
-  return (_hostdependencies);
-}
-
-/**
- *  Get the current hostdependencies.
- *
- *  @return The current hostdependencies.
- */
-umultimap<std::string, shared_ptr<hostdependency_struct> >& applier::state::hostdependencies() throw () {
-  return (_hostdependencies);
-}
-
-/**
- *  Get a host dependency from its key.
- *
- *  @param[in] k Host dependency key.
- *
- *  @return Iterator to the element if found, hostdependencies().end()
- *          otherwise.
- */
-umultimap<std::string, shared_ptr<hostdependency_struct> >::const_iterator applier::state::hostdependencies_find(configuration::hostdependency::key_type const& k) const {
-  return (const_cast<state*>(this)->hostdependencies_find(k));
-}
-
-/**
- *  Get a host dependency from its key.
- *
- *  @param[in] k Host dependency key.
- *
- *  @return Iterator to the element if found, hostdependencies().end()
- *          otherwise.
- */
-umultimap<std::string, shared_ptr<hostdependency_struct> >::iterator applier::state::hostdependencies_find(configuration::hostdependency::key_type const& k) {
-  typedef umultimap<std::string, shared_ptr<hostdependency_struct> > collection;
-  std::pair<collection::iterator, collection::iterator> p;
-  p = _hostdependencies.equal_range(*k.dependent_hosts().begin());
-  while (p.first != p.second) {
-    configuration::hostdependency current;
-    current.configuration::object::operator=(k);
-    current.dependent_hosts().insert(
-                                p.first->second->dependent_host_name);
-    current.hosts().insert(p.first->second->host_name);
-    current.dependency_period(p.first->second->dependency_period
-                              ? p.first->second->dependency_period
-                              : "");
-    current.inherits_parent(p.first->second->inherits_parent);
-    unsigned int options(
-      (p.first->second->fail_on_up
-       ? configuration::hostdependency::up
-       : 0)
-      | (p.first->second->fail_on_down
-         ? configuration::hostdependency::down
-         : 0)
-      | (p.first->second->fail_on_unreachable
-         ? configuration::hostdependency::unreachable
-         : 0)
-      | (p.first->second->fail_on_pending
-         ? configuration::hostdependency::pending
-         : 0));
-    if (p.first->second->dependency_type == NOTIFICATION_DEPENDENCY) {
-      current.dependency_type(
-                configuration::hostdependency::notification_dependency);
-      current.notification_failure_options(options);
-    }
-    else {
-      current.dependency_type(
-                configuration::hostdependency::execution_dependency);
-      current.execution_failure_options(options);
-    }
-    if (current == k)
-      break ;
-    ++p.first;
-  }
-  return ((p.first == p.second) ? _hostdependencies.end() : p.first);
-}
-
-/**
- *  Get the current hostescalations.
- *
- *  @return The current hostescalations.
- */
-umultimap<std::string, shared_ptr<hostescalation_struct> > const& applier::state::hostescalations() const throw () {
-  return (_hostescalations);
-}
-
-/**
- *  Get the current hostescalations.
- *
- *  @return The current hostescalations.
- */
-umultimap<std::string, shared_ptr<hostescalation_struct> >& applier::state::hostescalations() throw () {
-  return (_hostescalations);
-}
-
-/**
- *  Find a host escalation by its key.
- *
- *  @param[in] k Host escalation configuration.
- *
- *  @return Iterator to the element if found, hostescalations().end()
- *          otherwise.
- */
-umultimap<std::string, shared_ptr<hostescalation_struct> >::const_iterator applier::state::hostescalations_find(configuration::hostescalation::key_type const& k) const {
-  return (const_cast<state*>(this)->hostescalations_find(k));
-}
-
-/**
- *  Find a host escalation by its key.
- *
- *  @param[in] k Host escalation configuration.
- *
- *  @return Iterator to the element if found, hostescalations().end()
- *          otherwise.
- */
-umultimap<std::string, shared_ptr<hostescalation_struct> >::iterator applier::state::hostescalations_find(configuration::hostescalation::key_type const& k) {
-  // Copy host escalation configuration to sort some
-  // members (used for comparison below).
-  configuration::hostescalation hesc(k);
-
-  // Browse escalations matching target host.
-  typedef umultimap<std::string, shared_ptr<hostescalation_struct> > collection;
-  std::pair<collection::iterator, collection::iterator> p;
-  p = _hostescalations.equal_range(*k.hosts().begin());
-  while (p.first != p.second) {
-    // Create host escalation configuration from object.
-    configuration::hostescalation current;
-    current.configuration::object::operator=(k);
-    current.hosts().insert(p.first->second->host_name);
-    current.first_notification(p.first->second->first_notification);
-    current.last_notification(p.first->second->last_notification);
-    current.notification_interval(
-              static_cast<unsigned int>(p.first->second->notification_interval));
-    current.escalation_period(p.first->second->escalation_period
-                              ? p.first->second->escalation_period
-                              : "");
-    unsigned int options(
-                   (p.first->second->escalate_on_recovery
-                    ? configuration::hostescalation::recovery
-                    : 0)
-                   | (p.first->second->escalate_on_down
-                      ? configuration::hostescalation::down
-                      : 0)
-                   | (p.first->second->escalate_on_unreachable
-                      ? configuration::hostescalation::unreachable
-                      : 0));
-    current.escalation_options(options);
-    for (contactsmember_struct* m(p.first->second->contacts);
-         m;
-         m = m->next)
-      current.contacts().insert(m->contact_name);
-    for (contactgroupsmember_struct* m(p.first->second->contact_groups);
-         m;
-         m = m->next)
-      current.contactgroups().insert(m->group_name);
-
-    // Found !
-    if (current == hesc)
-      break ;
-
-    // Keep going.
-    ++p.first;
-  }
-  return ((p.first == p.second) ? _hostescalations.end() : p.first);
-}
-
-/**
- *  Get the current hostgroups.
- *
- *  @return The current hostgroups.
- */
-umap<std::string, shared_ptr<hostgroup_struct> > const& applier::state::hostgroups() const throw () {
-  return (_hostgroups);
-}
-
-/**
- *  Get the current hostgroups.
- *
- *  @return The current hostgroups.
- */
-umap<std::string, shared_ptr<hostgroup_struct> >& applier::state::hostgroups() throw () {
-  return (_hostgroups);
-}
-
-/**
- *  Find a host group from its key.
- *
- *  @param[in] k Host group name.
- *
- *  @return Iterator to the element if found, hostgroups().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<hostgroup_struct> >::const_iterator applier::state::hostgroups_find(configuration::hostgroup::key_type const& k) const {
-  return (_hostgroups.find(k));
-}
-
-/**
- *  Find a host group from its key.
- *
- *  @param[in] k Host group name.
- *
- *  @return Iterator to the element if found, hostgroups().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<hostgroup_struct> >::iterator applier::state::hostgroups_find(configuration::hostgroup::key_type const& k) {
-  return (_hostgroups.find(k));
-}
-
-/**
- *  Get the current services.
- *
- *  @return The current services.
- */
-umap<std::pair<std::string, std::string>, shared_ptr<service_struct> > const& applier::state::services() const throw () {
-  return (_services);
-}
-
-/**
- *  Get the current services.
- *
- *  @return The current services.
- */
-umap<std::pair<std::string, std::string>, shared_ptr<service_struct> >& applier::state::services() throw () {
-  return (_services);
-}
-
-/**
- *  Find a service by its key.
- *
- *  @param[in] k Pair of host name / service description.
- *
- *  @return Iterator to the element if found, services().end()
- *          otherwise.
- */
-umap<std::pair<std::string, std::string>, shared_ptr<service_struct> >::const_iterator applier::state::services_find(configuration::service::key_type const& k) const {
-  return (_services.find(k));
-}
-
-/**
- *  Find a service by its key.
- *
- *  @param[in] k Pair of host name / service description.
- *
- *  @return Iterator to the element if found, services().end()
- *          otherwise.
- */
-umap<std::pair<std::string, std::string>, shared_ptr<service_struct> >::iterator applier::state::services_find(configuration::service::key_type const& k) {
-  return (_services.find(k));
-}
-
-/**
- *  Get the current servicedependencies.
- *
- *  @return The current servicedependencies.
- */
-umultimap<std::pair<std::string, std::string>, shared_ptr<servicedependency_struct> > const& applier::state::servicedependencies() const throw () {
-  return (_servicedependencies);
-}
-
-/**
- *  Get the current servicedependencies.
- *
- *  @return The current servicedependencies.
- */
-umultimap<std::pair<std::string, std::string>, shared_ptr<servicedependency_struct> >& applier::state::servicedependencies() throw () {
-  return (_servicedependencies);
-}
-
-/**
- *  Find a service dependency from its key.
- *
- *  @param[in] k The service dependency configuration.
- *
- *  @return Iterator to the element if found,
- *          servicedependencies().end() otherwise.
- */
-umultimap<std::pair<std::string, std::string>, shared_ptr<servicedependency_struct> >::const_iterator applier::state::servicedependencies_find(configuration::servicedependency::key_type const& k) const {
-  return (const_cast<state*>(this)->servicedependencies_find(k));
-}
-
-/**
- *  Find a service dependency from its key.
- *
- *  @param[in] k The service dependency configuration.
- *
- *  @return Iterator to the element if found,
- *          servicedependencies().end() otherwise.
- */
-umultimap<std::pair<std::string, std::string>, shared_ptr<servicedependency_struct> >::iterator applier::state::servicedependencies_find(configuration::servicedependency::key_type const& k) {
-  typedef umultimap<std::pair<std::string, std::string>, shared_ptr<servicedependency_struct> > collection;
-  std::pair<collection::iterator, collection::iterator> p;
-  p = _servicedependencies.equal_range(std::make_pair(k.dependent_hosts().front(), k.dependent_service_description().front()));
-  while (p.first != p.second) {
-    configuration::servicedependency current;
-    current.configuration::object::operator=(k);
-    current.dependent_hosts().push_back(
-                                p.first->second->dependent_host_name);
-    current.dependent_service_description().push_back(
-              p.first->second->dependent_service_description);
-    current.hosts().push_back(p.first->second->host_name);
-    current.service_description().push_back(
-              p.first->second->service_description);
-    current.dependency_period(p.first->second->dependency_period
-                              ? p.first->second->dependency_period
-                              : "");
-    current.inherits_parent(p.first->second->inherits_parent);
-    unsigned int options(
-                   (p.first->second->fail_on_ok
-                    ? configuration::servicedependency::ok
-                    : 0)
-                   | (p.first->second->fail_on_warning
-                      ? configuration::servicedependency::warning
-                      : 0)
-                   | (p.first->second->fail_on_unknown
-                      ? configuration::servicedependency::unknown
-                      : 0)
-                   | (p.first->second->fail_on_critical
-                      ? configuration::servicedependency::critical
-                      : 0)
-                   | (p.first->second->fail_on_pending
-                      ? configuration::servicedependency::pending
-                      : 0));
-    if (p.first->second->dependency_type == NOTIFICATION_DEPENDENCY) {
-      current.dependency_type(
-        configuration::servicedependency::notification_dependency);
-      current.notification_failure_options(options);
-    }
-    else {
-      current.dependency_type(
-        configuration::servicedependency::execution_dependency);
-      current.execution_failure_options(options);
-    }
-    if (current == k)
-      break ;
-    ++p.first;
-  }
-  return ((p.first == p.second) ? _servicedependencies.end() : p.first);
-}
-
-/**
- *  Get the current serviceescalations.
- *
- *  @return The current serviceescalations.
- */
-umultimap<std::pair<std::string, std::string>, shared_ptr<serviceescalation_struct> > const& applier::state::serviceescalations() const throw () {
-  return (_serviceescalations);
-}
-
-/**
- *  Get the current serviceescalations.
- *
- *  @return The current serviceescalations.
- */
-umultimap<std::pair<std::string, std::string>, shared_ptr<serviceescalation_struct> >& applier::state::serviceescalations() throw () {
-  return (_serviceescalations);
-}
-
-/**
- *  Find a service escalation by its key.
- *
- *  @param[in] k Service escalation configuration object.
- *
- *  @return Iterator to the element if found, serviceescalations().end()
- *          otherwise.
- */
-umultimap<std::pair<std::string, std::string>, shared_ptr<serviceescalation_struct> >::const_iterator applier::state::serviceescalations_find(configuration::serviceescalation::key_type const& k) const {
-  return (const_cast<state*>(this)->serviceescalations_find(k));
-}
-
-/**
- *  Find a service escalation by its key.
- *
- *  @param[in] k Service escalation configuration object.
- *
- *  @return Iterator to the element if found, serviceescalations().end()
- *          otherwise.
- */
-umultimap<std::pair<std::string, std::string>, shared_ptr<serviceescalation_struct> >::iterator applier::state::serviceescalations_find(configuration::serviceescalation::key_type const& k) {
-  // Copy service escalation configuration to sort some
-  // members (used for comparison below).
-  configuration::serviceescalation sesc(k);
-
-  // Browse escalations matching target service.
-  typedef umultimap<std::pair<std::string, std::string>, shared_ptr<serviceescalation_struct> > collection;
-  std::pair<collection::iterator, collection::iterator> p;
-  p = _serviceescalations.equal_range(std::make_pair(k.hosts().front(), k.service_description().front()));
-  while (p.first != p.second) {
-    // Create service escalation configuration from object.
-    configuration::serviceescalation current;
-    current.configuration::object::operator=(k);
-    current.hosts().push_back(p.first->second->host_name);
-    current.service_description().push_back(
-                                    p.first->second->description);
-    current.first_notification(p.first->second->first_notification);
-    current.last_notification(p.first->second->last_notification);
-    current.notification_interval(
-              static_cast<unsigned int>(p.first->second->notification_interval));
-    current.escalation_period(p.first->second->escalation_period
-                              ? p.first->second->escalation_period
-                              : "");
-    unsigned int options((p.first->second->escalate_on_recovery
-                          ? configuration::serviceescalation::recovery
-                          : 0)
-                         | (p.first->second->escalate_on_warning
-                            ? configuration::serviceescalation::warning
-                            : 0)
-                         | (p.first->second->escalate_on_unknown
-                            ? configuration::serviceescalation::unknown
-                            : 0)
-                         | (p.first->second->escalate_on_critical
-                            ? configuration::serviceescalation::critical
-                            : 0));
-    current.escalation_options(options);
-    for (contactsmember_struct* m(p.first->second->contacts);
-         m;
-         m = m->next)
-      current.contacts().insert(m->contact_name);
-    for (contactgroupsmember_struct* m(p.first->second->contact_groups);
-         m;
-         m = m->next)
-      current.contactgroups().insert(m->group_name);
-
-    // Found !
-    if (current == sesc)
-      break ;
-
-    // Keep going.
-    ++p.first;
-  }
-  return ((p.first == p.second) ? _serviceescalations.end() : p.first);
-}
-
-/**
- *  Get the current servicegroups.
- *
- *  @return The current servicegroups.
- */
-umap<std::string, shared_ptr<servicegroup_struct> > const& applier::state::servicegroups() const throw () {
-  return (_servicegroups);
-}
-
-/**
- *  Get the current servicegroups.
- *
- *  @return The current servicegroups.
- */
-umap<std::string, shared_ptr<servicegroup_struct> >& applier::state::servicegroups() throw () {
-  return (_servicegroups);
-}
-
-/**
- *  Find a service group from its key.
- *
- *  @param[in] k Service group name.
- *
- *  @return Iterator to the element if found, servicegroups().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<servicegroup_struct> >::const_iterator applier::state::servicegroups_find(configuration::servicegroup::key_type const& k) const {
-  return (_servicegroups.find(k));
-}
-
-/**
- *  Find a service group from its key.
- *
- *  @param[in] k Service group name.
- *
- *  @return Iterator to the element if found, servicegroups().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<servicegroup_struct> >::iterator applier::state::servicegroups_find(configuration::servicegroup::key_type const& k) {
-  return (_servicegroups.find(k));
-}
-
-/**
- *  Get the current timeperiods.
- *
- *  @return The current timeperiods.
- */
-umap<std::string, shared_ptr<timeperiod_struct> > const& applier::state::timeperiods() const throw () {
-  return (_timeperiods);
-}
-
-/**
- *  Get the current timeperiods.
- *
- *  @return The current timeperiods.
- */
-umap<std::string, shared_ptr<timeperiod_struct> >& applier::state::timeperiods() throw () {
-  return (_timeperiods);
-}
-
-/**
- *  Find a time period from its key.
- *
- *  @param[in] k Time period name.
- *
- *  @return Iterator to the element if found, timeperiods().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<timeperiod_struct> >::const_iterator applier::state::timeperiods_find(configuration::timeperiod::key_type const& k) const {
-  return (_timeperiods.find(k));
-}
-
-/**
- *  Find a time period from its key.
- *
- *  @param[in] k Time period name.
- *
- *  @return Iterator to the element if found, timeperiods().end()
- *          otherwise.
- */
-umap<std::string, shared_ptr<timeperiod_struct> >::iterator applier::state::timeperiods_find(configuration::timeperiod::key_type const& k) {
-  return (_timeperiods.find(k));
-}
-
-/**
  *  Return the user macros.
  *
  *  @return  The user macros.
  */
-umap<std::string, std::string>& applier::state::user_macros() {
-  return (_user_macros);
-}
-
-/**
- *  Return the user macros, immutable.
- *
- *  @return  The user macros, immutable.
- */
-umap<std::string, std::string> const& applier::state::user_macros() const {
-  return (_user_macros);
+std::unordered_map<std::string, std::string>& applier::state::user_macros() {
+  return _user_macros;
 }
 
 /**
@@ -947,19 +211,24 @@ umap<std::string, std::string> const& applier::state::user_macros() const {
  *
  *  @return  Iterator to user macros.
  */
-umap<std::string, std::string>::const_iterator applier::state::user_macros_find(std::string const& key) const {
-  return (_user_macros.find(key));
+std::unordered_map<std::string, std::string>::const_iterator applier::state::user_macros_find(std::string const& key) const {
+  return _user_macros.find(key);
 }
 
 /**
- *  Try to lock.
+ *  Lock state
+ *
  */
-void applier::state::try_lock() {
-  concurrency::locker lock(&_lock);
-  if (_processing_state == state_waiting) {
-    _cv_lock.wake_one();
-    _cv_lock.wait(&_lock);
-  }
+void applier::state::lock() {
+  _apply_lock.lock();
+}
+
+/**
+ *  Unlock state
+ *
+ */
+void applier::state::unlock() {
+  _apply_lock.unlock();
 }
 
 /*
@@ -1168,32 +437,34 @@ void applier::state::_apply(configuration::state const& new_cfg) {
     std::string temp_command_name(config->global_host_event_handler().substr(
                                     0,
                                     config->global_host_event_handler().find_first_of('!')));
-    command_struct* temp_command(::find_command(temp_command_name.c_str()));
-    if (!temp_command) {
+    command_map::iterator found{
+      commands::command::commands.find(temp_command_name)};
+    if(found == commands::command::commands.end() || !found->second)  {
       logger(log_verification_error, basic)
         << "Error: Global host event handler command '"
         << temp_command_name << "' is not defined anywhere!";
       ++config_errors;
+      global_host_event_handler_ptr = nullptr;
     }
-
-    // Save the pointer to the command for later.
-    global_host_event_handler_ptr = temp_command;
+    else
+      global_host_event_handler_ptr = found->second.get();
   }
   if (!config->global_service_event_handler().empty()) {
     // Check the event handler command.
     std::string temp_command_name(config->global_service_event_handler().substr(
                                     0,
                                     config->global_service_event_handler().find_first_of('!')));
-    command_struct* temp_command(::find_command(temp_command_name.c_str()));
-    if (!temp_command) {
-      logger(log_verification_error, basic)
-        << "Error: Global service event handler command '"
-        << temp_command_name << "' is not defined anywhere!";
+    command_map::iterator found{
+      commands::command::commands.find(temp_command_name)};
+    if(found == commands::command::commands.end() || !found->second)  {
+       logger(log_verification_error, basic)
+      << "Error: Global service event handler command '"
+      << temp_command_name << "' is not defined anywhere!";
       ++config_errors;
+      global_service_event_handler_ptr = nullptr;
     }
-
-    // Save the pointer to the command for later.
-    global_service_event_handler_ptr = temp_command;
+    else
+      global_service_event_handler_ptr = found->second.get();
   }
 
   // Check obsessive processor commands...
@@ -1204,31 +475,33 @@ void applier::state::_apply(configuration::state const& new_cfg) {
     std::string temp_command_name(config->ocsp_command().substr(
                                     0,
                                     config->ocsp_command().find_first_of('!')));
-    command_struct* temp_command(::find_command(temp_command_name.c_str()));
-    if (!temp_command) {
+    command_map::iterator found{
+      commands::command::commands.find(temp_command_name)};
+    if(found == commands::command::commands.end() || !found->second)  {
       logger(log_verification_error, basic)
         << "Error: Obsessive compulsive service processor command '"
         << temp_command_name << "' is not defined anywhere!";
       ++config_errors;
+      ocsp_command_ptr = nullptr;
     }
-
-    // Save the pointer to the command for later.
-    ocsp_command_ptr = temp_command;
+    else
+      ocsp_command_ptr = found->second.get();
   }
   if (!config->ochp_command().empty()) {
     std::string temp_command_name(config->ochp_command().substr(
                                     0,
                                     config->ochp_command().find_first_of('!')));
-    command_struct* temp_command(::find_command(temp_command_name.c_str()));
-    if (!temp_command) {
+    command_map::iterator found{
+      commands::command::commands.find(temp_command_name)};
+    if(found == commands::command::commands.end() || !found->second)  {
       logger(log_verification_error, basic)
         << "Error: Obsessive compulsive host processor command '"
         << temp_command_name << "' is not defined anywhere!";
       ++config_errors;
+      ochp_command_ptr = nullptr;
     }
-
-    // Save the pointer to the command for later.
-    ochp_command_ptr = temp_command;
+    else
+      ochp_command_ptr = found->second.get();
   }
 }
 
@@ -1315,9 +588,373 @@ void applier::state::_apply(
       }
     }
   }
-
-  return ;
 }
+
+#ifdef DEBUG_CONFIG
+/**
+ *  A method to check service escalations pointers of each service are well
+ *  defined.
+ *
+ *  If something wrong is found, an exception is thrown.
+ */
+void applier::state::_check_serviceescalations() const {
+  for (auto const& p : engine::service::services) {
+    engine::service const* srv{p.second.get()};
+
+    std::unordered_set<uint64_t> s;
+    for (auto const& escalation : srv->get_escalations()) {
+      s.insert((uint64_t)static_cast<void*>(escalation));
+      bool found = false;
+      for (auto const& e : engine::serviceescalation::serviceescalations) {
+        if (e.second.get() == escalation) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        logger(log_config_error, basic)
+          << "Error on serviceescalation !!! The service "
+          << srv->get_hostname() << "/" << srv->get_description()
+          << " contains a non existing service escalation";
+        throw engine_error() << "This is a bug";
+      }
+    }
+    if (s.size() != srv->get_escalations().size()) {
+      logger(log_config_error, basic)
+          << "Error on serviceescalation !!! Some escalations are stored "
+             "several times in service "
+          << srv->get_hostname() << "/" << srv->get_description()
+          << "set size: " << s.size()
+          << " ; list size: " << srv->get_escalations().size();
+      throw engine_error() << "This is a bug";
+    }
+  }
+
+  for (auto const& e : engine::serviceescalation::serviceescalations) {
+    engine::serviceescalation const* se{e.second.get()};
+    bool found = false;
+
+    for (auto const& p : engine::service::services) {
+      if (p.second.get() == se->notifier_ptr) {
+        found = true;
+        if (se->get_hostname() != p.second->get_hostname()) {
+          logger(log_config_error, basic)
+            << "Error on serviceescalation !!! The notifier seen by the escalation is wrong. "
+            << "Host name given by the escalation is " << se->get_hostname() << " whereas the hostname from the notifier is " << p.second->get_hostname() << ".";
+          throw engine_error() << "This is a bug";
+        }
+        if (se->get_description() != p.second->get_description()) {
+          logger(log_config_error, basic)
+            << "Error on serviceescalation !!! The notifier seen by the escalation is wrong. "
+            << "Service description given by the escalation is " << se->get_description() << " whereas the service description from the notifier is " << p.second->get_description() << ".";
+          throw engine_error() << "This is a bug";
+        }
+        break;
+      }
+    }
+    if (!found) {
+      logger(log_config_error, basic)
+        << "Error on serviceescalation !!! The notifier seen by the escalation is wrong "
+        << "The bug is detected on escalation concerning host " << se->get_hostname() << " and service " << se->get_description();
+      throw engine_error() << "This is a bug";
+    }
+  }
+}
+
+/**
+ *  A method to check host escalations pointers of each host are well
+ *  defined.
+ *
+ *  If something wrong is found, an exception is thrown.
+ */
+void applier::state::_check_hostescalations() const {
+  for (auto const& p : engine::host::hosts) {
+    engine::host const* hst{p.second.get()};
+
+    for (auto const& escalation : hst->get_escalations()) {
+      bool found = false;
+      for (auto const& e : engine::hostescalation::hostescalations) {
+        if (e.second.get() == escalation) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        logger(log_config_error, basic)
+            << "Error on hostescalation !!! The host " << hst->get_name()
+            << " contains a non existing host escalation";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+
+  for (auto const& e : engine::hostescalation::hostescalations) {
+    engine::hostescalation const* he{e.second.get()};
+    bool found = false;
+
+    for (auto const& p : engine::host::hosts) {
+      if (p.second.get() == he->notifier_ptr) {
+        found = true;
+        if (he->get_hostname() != p.second->get_name()) {
+          logger(log_config_error, basic)
+              << "Error on hostescalation !!! The notifier seen by the "
+                 "escalation is wrong. "
+              << "Host name given by the escalation is " << he->get_hostname()
+              << " whereas the hostname from the notifier is "
+              << p.second->get_name() << ".";
+          throw engine_error() << "This is a bug";
+        }
+        break;
+      }
+    }
+    if (!found) {
+      logger(log_config_error, basic)
+          << "Error on hostescalation !!! The notifier seen by the escalation "
+             "is wrong "
+          << "The bug is detected on escalation concerning host "
+          << he->get_hostname();
+      throw engine_error() << "This is a bug";
+    }
+  }
+}
+
+/**
+ *  A method to check contacts pointers of each possible container are well
+ *  defined.
+ *
+ *  If something wrong is found, an exception is thrown.
+ */
+void applier::state::_check_contacts() const {
+  for (auto const& p : engine::contactgroup::contactgroups) {
+    engine::contactgroup const* cg{p.second.get()};
+    for (auto const& pp : cg->get_members()) {
+      contact_map::iterator found{engine::contact::contacts.find(pp.first)};
+      if (found == engine::contact::contacts.end() || found->second.get() != pp.second) {
+        logger(log_config_error, basic)
+          << "Error on contact !!! The contact " << pp.first << " used in contactgroup " << p.first << " is not or badly defined";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+
+  for (auto const& p : engine::service::services) {
+    for (auto const& pp : p.second->get_contacts()) {
+      contact_map::iterator found{engine::contact::contacts.find(pp.first)};
+      if (found == engine::contact::contacts.end() || found->second.get() != pp.second) {
+        logger(log_config_error, basic)
+          << "Error on contact !!! The contact " << pp.first << " used in service " << p.second->get_hostname() << '/' << p.second->get_description() << " is not or badly defined";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+
+  for (auto const& p : engine::host::hosts) {
+    for (auto const& pp : p.second->get_contacts()) {
+      contact_map::iterator found{engine::contact::contacts.find(pp.first)};
+      if (found == engine::contact::contacts.end() || found->second.get() != pp.second) {
+        logger(log_config_error, basic)
+          << "Error on contact !!! The contact " << pp.first << " used in service " << p.second->get_name() << " is not or badly defined";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+}
+
+/**
+ *  A method to check contactgroups pointers of each possible container are well
+ *  defined.
+ *
+ *  If something wrong is found, an exception is thrown.
+ */
+void applier::state::_check_contactgroups() const {
+  for (auto const& p : engine::service::services) {
+    engine::service const* svc{p.second.get()};
+    for (auto const& pp : svc->get_contactgroups()) {
+      contactgroup_map::iterator found{engine::contactgroup::contactgroups.find(pp.first)};
+      if (found == engine::contactgroup::contactgroups.end() || found->second.get() != pp.second) {
+        logger(log_config_error, basic)
+          << "Error on contactgroup !!! The contactgroup " << pp.first << " used in service " << p.first.first << '/' << p.first.second << " is not or badly defined";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+
+  for (auto const& p : engine::host::hosts) {
+    for (auto const& pp : p.second->get_contactgroups()) {
+      contactgroup_map::iterator found{engine::contactgroup::contactgroups.find(pp.first)};
+      if (found == engine::contactgroup::contactgroups.end() || found->second.get() != pp.second) {
+        logger(log_config_error, basic)
+          << "Error on contactgroup !!! The contactgroup " << pp.first << " used in host " << p.first << " is not or badly defined";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+
+  for (auto const& p : engine::serviceescalation::serviceescalations) {
+    for (auto const& pp : p.second->get_contactgroups()) {
+      contactgroup_map::iterator found{engine::contactgroup::contactgroups.find(pp.first)};
+      if (found == engine::contactgroup::contactgroups.end() || found->second.get() != pp.second) {
+        logger(log_config_error, basic)
+          << "Error on contactgroup !!! The contactgroup " << pp.first << " used in serviceescalation " << p.second->get_uuid().to_string() << " is not or badly defined";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+
+  for (auto const& p : engine::hostescalation::hostescalations) {
+    for (auto const& pp : p.second->get_contactgroups()) {
+      contactgroup_map::iterator found{engine::contactgroup::contactgroups.find(pp.first)};
+      if (found == engine::contactgroup::contactgroups.end() || found->second.get() != pp.second) {
+        logger(log_config_error, basic)
+          << "Error on contactgroup !!! The contactgroup " << pp.first << " used in hostescalation " << p.second->get_uuid().to_string() << " is not or badly defined";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+}
+
+/**
+ *  A method to check services pointers of each possible container are well
+ *  defined.
+ *
+ *  If something wrong is found, an exception is thrown.
+ */
+void applier::state::_check_services() const {
+  for (auto const& p : engine::servicedependency::servicedependencies) {
+    engine::servicedependency const* sd{p.second.get()};
+    std::list<engine::service*> svcs{sd->master_service_ptr,
+                                     sd->dependent_service_ptr};
+    for (engine::service const* svc : svcs) {
+      service_id_map::const_iterator found{engine::service::services_by_id.find(
+          {svc->get_host_id(), svc->get_service_id()})};
+      if (found == engine::service::services_by_id.end() ||
+          found->second.get() != svc) {
+        logger(log_config_error, basic)
+            << "Error on service !!! The service " << p.first.first << '/' << p.first.second
+            << " used in service dependency " << p.first.first << '/' << p.first.second
+            << " is not or badly defined";
+        throw engine_error() << "This is a bug";
+      }
+    }
+  }
+
+  for (auto const& p : engine::service::services_by_id) {
+    service_map::const_iterator found{engine::service::services.find(
+        {p.second->get_hostname(), p.second->get_description()})};
+    if (found == engine::service::services.end() ||
+        found->second.get() != p.second.get()) {
+      logger(log_config_error, basic)
+          << "Error on service !!! The service " << p.first.first << '/'
+          << p.first.second
+          << " defined in services is not defined in services_by_id";
+      throw engine_error() << "This is a bug";
+    }
+  }
+
+  for (auto const& p : engine::service::services) {
+    std::array<commands::command*, 2> arr{
+        p.second->get_check_command_ptr(),
+        p.second->get_event_handler_ptr(),
+    };
+    for (auto cc : arr) {
+      if (cc) {
+        bool found = false;
+        for (auto& c : engine::commands::command::commands) {
+          if (c.second.get() == cc) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          logger(log_config_error, basic)
+              << "Error on service !!! The service " << p.first.first << '/'
+              << p.first.second
+              << " defined in services has a wrong check command";
+          throw engine_error() << "This is a bug";
+        }
+      }
+    }
+  }
+
+  if (engine::service::services_by_id.size() != engine::service::services.size()) {
+    logger(log_config_error, basic)
+        << "Error on service !!! services_by_id contains ices that are not in "
+           "services. The first one size is "
+        << engine::service::services.size() << "  the second size is "
+        << engine::service::services.size();
+    throw engine_error() << "This is a bug";
+  }
+}
+
+/**
+ *  A method to check hosts pointers of each possible container are well
+ *  defined.
+ *
+ *  If something wrong is found, an exception is thrown.
+ */
+void applier::state::_check_hosts() const {
+  auto find_host_by_name = [] (engine::host const* hst,
+                               std::string const& where) {
+    host_map::const_iterator found{engine::host::hosts.find(hst->get_name())};
+    if (found == engine::host::hosts.end() || found->second.get() != hst) {
+      logger(log_config_error, basic)
+          << "Error on host !!! The host " << hst->get_name() << " used in "
+          << where << " is not defined or badly defined in hosts";
+      throw engine_error() << "This is a bug";
+    }
+  };
+
+  for (auto const& p : engine::hostdependency::hostdependencies) {
+    engine::hostdependency const* sd{p.second.get()};
+    std::list<engine::host*> hsts{sd->master_host_ptr,
+                                     sd->dependent_host_ptr};
+    for (engine::host const* hst : hsts)
+      find_host_by_name(hst, "hostdependency");
+  }
+
+  for (auto const& p : engine::host::hosts_by_id) {
+    find_host_by_name(p.second.get(), "hosts_by_id");
+  }
+
+  for (auto const& p : engine::host::hosts) {
+    std::array<commands::command*, 2> arr{
+        p.second->get_check_command_ptr(),
+        p.second->get_event_handler_ptr(),
+    };
+    for (auto cc : arr) {
+      if (cc) {
+        bool found = false;
+        for (auto& c : engine::commands::command::commands) {
+          if (c.second.get() == cc) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          logger(log_config_error, basic)
+              << "Error on host !!! The host " << p.first
+              << " defined in hosts has a wrong check command";
+          throw engine_error() << "This is a bug";
+        }
+      }
+    }
+  }
+
+  if (engine::host::hosts_by_id.size() != engine::host::hosts.size()) {
+    logger(log_config_error, basic)
+        << "Error on host !!! hosts_by_id contains hosts that are not in "
+           "hosts. The first one size is "
+        << engine::service::services.size() << " whereas the second size is "
+        << engine::service::services.size();
+    throw engine_error() << "This is a bug";
+  }
+
+  for (auto const& p : engine::service::services)
+    find_host_by_name(p.second->get_host_ptr(), "service");
+
+}
+
+#endif
 
 /**
  *  Apply retention.
@@ -1363,19 +1000,16 @@ void applier::state::_expand(configuration::state& new_state) {
     else
       throw ;
   }
-  return ;
 }
 
 /**
  *  Process new configuration and apply it.
  *
  *  @param[in] new_cfg        The new configuration.
- *  @param[in] waiting_thread True to wait thread after calulate differencies.
  *  @param[in] state          The retention to use.
  */
 void applier::state::_processing(
        configuration::state& new_cfg,
-       bool waiting_thread,
        retention::state* state) {
   // Timing.
   struct timeval tv[5];
@@ -1386,36 +1020,30 @@ void applier::state::_processing(
       NEBTYPE_PROCESS_PRELAUNCH,
       NEBFLAG_NONE,
       NEBATTR_NONE,
-      NULL);
+      nullptr);
 
   //
   // Expand all objects.
   //
-  gettimeofday(tv, NULL);
+  gettimeofday(tv, nullptr);
 
   // Expand timeperiods.
-  _expand<configuration::timeperiod, applier::timeperiod>(
-    new_cfg);
+  _expand<configuration::timeperiod, applier::timeperiod>(new_cfg);
 
   // Expand connectors.
-  _expand<configuration::connector, applier::connector>(
-    new_cfg);
+  _expand<configuration::connector, applier::connector>(new_cfg);
 
   // Expand commands.
-  _expand<configuration::command, applier::command>(
-    new_cfg);
+  _expand<configuration::command, applier::command>(new_cfg);
 
   // Expand contacts.
-  _expand<configuration::contact, applier::contact>(
-    new_cfg);
+  _expand<configuration::contact, applier::contact>(new_cfg);
 
   // Expand contactgroups.
-  _expand<configuration::contactgroup, applier::contactgroup>(
-    new_cfg);
+  _expand<configuration::contactgroup, applier::contactgroup>(new_cfg);
 
   // Expand hosts.
-  _expand<configuration::host, applier::host>(
-    new_cfg);
+  _expand<configuration::host, applier::host>(new_cfg);
 
   // Expand hostgroups.
   _expand<configuration::hostgroup, applier::hostgroup>(
@@ -1528,17 +1156,11 @@ void applier::state::_processing(
     new_cfg.serviceescalations());
 
   // Timing.
-  gettimeofday(tv + 1, NULL);
-
-  if (waiting_thread && _processing_state == state_ready) {
-    concurrency::locker lock(&_lock);
-    _processing_state = state_waiting;
-    // Wait to stop engine before apply configuration.
-    _cv_lock.wait(&_lock);
-    _processing_state = state_apply;
-  }
+  gettimeofday(tv + 1, nullptr);
 
   try {
+    std::lock_guard<std::mutex> locker(_apply_lock);
+
     // Apply logging configurations.
     applier::logging::instance().apply(new_cfg);
 
@@ -1549,7 +1171,7 @@ void applier::state::_processing(
     applier::macros::instance().apply(new_cfg);
 
     // Timing.
-    gettimeofday(tv + 2, NULL);
+    gettimeofday(tv + 2, nullptr);
 
     if (!has_already_been_loaded
         && !verify_config
@@ -1645,6 +1267,19 @@ void applier::state::_processing(
     _resolve<configuration::serviceescalation, applier::serviceescalation>(
       config->serviceescalations());
 
+#ifdef DEBUG_CONFIG
+    logger(log_config_error, basic)
+      << "WARNING!! You are using a version of centreon engine for developers!!!"
+      " This is not a production version.";
+    // Checks on configuration
+    _check_serviceescalations();
+    _check_hostescalations();
+    _check_contacts();
+    _check_contactgroups();
+    _check_services();
+    _check_hosts();
+#endif
+
     // Load retention.
     if (state)
       _apply(new_cfg, *state);
@@ -1671,7 +1306,7 @@ void applier::state::_processing(
     }
 
     // Timing.
-    gettimeofday(tv + 3, NULL);
+    gettimeofday(tv + 3, nullptr);
 
     // Check for circular paths between hosts.
     pre_flight_circular_check(&config_warnings, &config_errors);
@@ -1684,7 +1319,7 @@ void applier::state::_processing(
         NEBTYPE_PROCESS_START,
         NEBFLAG_NONE,
         NEBATTR_NONE,
-        NULL);
+        nullptr);
     }
     else
       neb_reload_all_modules();
@@ -1696,9 +1331,9 @@ void applier::state::_processing(
              end(diff_hosts.added().end());
            it != end;
            ++it) {
-        umap<std::string, shared_ptr<host_struct> >::const_iterator
-          hst(hosts().find(it->host_name()));
-        if (hst != hosts().end())
+        host_id_map::const_iterator
+          hst(engine::host::hosts_by_id.find(it->host_id()));
+        if (hst != engine::host::hosts_by_id.end())
           log_host_state(INITIAL_STATES, hst->second.get());
       }
       for (set_service::iterator
@@ -1706,17 +1341,17 @@ void applier::state::_processing(
              end(diff_services.added().end());
            it != end;
            ++it) {
-        umap<std::pair<std::string, std::string>, shared_ptr<service_struct> >::const_iterator
-          svc(services().find(std::make_pair(
-                                     *it->hosts().begin(),
-                                     it->service_description())));
-        if (svc != services().end())
+        service_id_map::const_iterator
+          svc(engine::service::services_by_id.find({
+                                     it->host_id(),
+                                     it->service_id()}));
+        if (svc != engine::service::services_by_id.end())
           log_service_state(INITIAL_STATES, svc->second.get());
       }
     }
 
     // Timing.
-    gettimeofday(tv + 4, NULL);
+    gettimeofday(tv + 4, nullptr);
     if (test_scheduling) {
       double runtimes[5];
       runtimes[4] = 0.0;
@@ -1776,5 +1411,4 @@ void applier::state::_resolve(
         throw ;
     }
   }
-  return ;
 }

@@ -43,25 +43,14 @@ int clear_hostgroup_macros_r(nagios_macros* mac) {
   for (unsigned int i = 0;
        i < sizeof(to_free) / sizeof(*to_free);
        ++i) {
-    delete[] mac->x[i];
-    mac->x[i] = NULL;
+    mac->x[i] = "";
   }
 
   // Clear pointers.
-  mac->hostgroup_ptr = NULL;
+  mac->hostgroup_ptr = nullptr;
 
   return (OK);
 }
 
-/**
- *  Clear global hostgroup macros.
- *
- *  @return OK on success.
- *
- *  @see clear_hostgroup_macros_r
- */
-int clear_hostgroup_macros() {
-  return (clear_hostgroup_macros_r(get_global_macros()));
-}
 
 }

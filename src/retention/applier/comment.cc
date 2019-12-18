@@ -17,9 +17,9 @@
 ** <http://www.gnu.org/licenses/>.
 */
 
+#include "com/centreon/engine/comment.hh"
 #include "com/centreon/engine/configuration/applier/state.hh"
 #include "com/centreon/engine/globals.hh"
-#include "com/centreon/engine/objects/comment.hh"
 #include "com/centreon/engine/retention/applier/comment.hh"
 
 using namespace com::centreon::engine::retention;
@@ -32,7 +32,6 @@ using namespace com::centreon::engine;
  */
 void applier::comment::apply(list_comment const& lst) {
   // Big speedup when reading retention.dat in bulk.
-  defer_comment_sorting = 1;
 
   for (list_comment::const_iterator it(lst.begin()), end(lst.end());
        it != end;
@@ -42,9 +41,6 @@ void applier::comment::apply(list_comment const& lst) {
     else
       _add_service_comment(**it);
   }
-
-  // Sort all comments.
-  sort_comments();
 }
 
 /**
@@ -54,37 +50,38 @@ void applier::comment::apply(list_comment const& lst) {
  */
 void applier::comment::_add_host_comment(
        retention::comment const& obj) throw () {
-  umap<std::string, shared_ptr<host_struct> >::const_iterator
-    it(configuration::applier::state::instance().hosts().find(obj.host_name()));
-  if (it == configuration::applier::state::instance().hosts().end())
+  host_map::const_iterator it(host::hosts.find(obj.host_name()));
+  if (it == host::hosts.end() || !it->second)
     return;
-  host_struct* hst(it->second.get());
 
   // add the comment.
-  add_comment(
-    HOST_COMMENT,
-    obj.entry_type(),
-    obj.host_name().c_str(),
-    NULL,
-    obj.entry_time(),
-    obj.author().c_str(),
-    obj.comment_data().c_str(),
-    obj.comment_id(),
-    obj.persistent(),
-    obj.expires(),
-    obj.expire_time(),
-    obj.source());
+  std::shared_ptr<engine::comment> com{
+    new engine::comment(
+      engine::comment::host,
+      static_cast<engine::comment::e_type>(obj.entry_type()),
+      obj.host_name(),
+      "",
+      obj.entry_time(),
+      obj.author(),
+      obj.comment_data(),
+      obj.persistent(),
+      static_cast<engine::comment::src>(obj.source()),
+      obj.expires(),
+      obj.expire_time(),
+      obj.comment_id())};
+
+  engine::comment::comments.insert({com->get_comment_id(), com});
 
   // acknowledgement comments get deleted if they're not persistent
   // and the original problem is no longer acknowledged.
-  if (obj.entry_type() == ACKNOWLEDGEMENT_COMMENT) {
-    if (!hst->problem_has_been_acknowledged && !obj.persistent())
-      delete_comment(HOST_COMMENT, obj.comment_id());
+  if (obj.entry_type() == com::centreon::engine::comment::acknowledgment) {
+    if (!it->second->get_problem_has_been_acknowledged() && !obj.persistent())
+      engine::comment::delete_comment(obj.comment_id());
   }
   // non-persistent comments don't last past restarts UNLESS
   // they're acks (see above).
   else if (!obj.persistent())
-    delete_comment(HOST_COMMENT, obj.comment_id());
+    engine::comment::delete_comment(obj.comment_id());
 }
 
 /**
@@ -94,40 +91,40 @@ void applier::comment::_add_host_comment(
  */
 void applier::comment::_add_service_comment(
        retention::comment const& obj) throw () {
-  if (!is_host_exist(obj.host_name()))
+  if (!is_host_exist(get_host_id(obj.host_name().c_str())))
     return;
 
-  std::pair<std::string, std::string>
-    id(std::make_pair(obj.host_name(), obj.service_description()));
-  umap<std::pair<std::string, std::string>, shared_ptr<service_struct> >::const_iterator
-    it_svc(configuration::applier::state::instance().services().find(id));
-  if (it_svc == configuration::applier::state::instance().services().end())
+  service_map::const_iterator it_svc(service::services.find(
+    {obj.host_name().c_str(), obj.service_description().c_str()}));
+  if (it_svc == service::services.end() || !it_svc->second)
     return;
-  service_struct* svc(&*it_svc->second);
 
   // add the comment.
-  add_comment(
-    SERVICE_COMMENT,
-    obj.entry_type(),
-    obj.host_name().c_str(),
-    obj.service_description().c_str(),
-    obj.entry_time(),
-    obj.author().c_str(),
-    obj.comment_data().c_str(),
-    obj.comment_id(),
-    obj.persistent(),
-    obj.expires(),
-    obj.expire_time(),
-    obj.source());
+  std::shared_ptr<engine::comment> com{
+    new engine::comment(
+      engine::comment::service,
+      static_cast<engine::comment::e_type>(obj.entry_type()),
+      obj.host_name(),
+      obj.service_description(),
+      obj.entry_time(),
+      obj.author(),
+      obj.comment_data(),
+      obj.persistent(),
+      static_cast<engine::comment::src>(obj.source()),
+      obj.expires(),
+      obj.expire_time(),
+      obj.comment_id())};
+
+  engine::comment::comments.insert({com->get_comment_id(), com});
 
   // acknowledgement comments get deleted if they're not persistent
   // and the original problem is no longer acknowledged.
-  if (obj.entry_type() == ACKNOWLEDGEMENT_COMMENT) {
-    if (!svc->problem_has_been_acknowledged && !obj.persistent())
-      delete_comment(SERVICE_COMMENT, obj.comment_id());
+  if (obj.entry_type() == com::centreon::engine::comment::acknowledgment) {
+    if (!it_svc->second->get_problem_has_been_acknowledged() && !obj.persistent())
+      engine::comment::delete_comment(obj.comment_id());
   }
   // non-persistent comments don't last past restarts UNLESS
   // they're acks (see above).
   else if (!obj.persistent())
-    delete_comment(SERVICE_COMMENT, obj.comment_id());
+    engine::comment::delete_comment(obj.comment_id());
 }

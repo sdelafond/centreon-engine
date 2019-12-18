@@ -24,7 +24,6 @@
 #  include <set>
 #  include <string>
 #  include "com/centreon/engine/namespace.hh"
-#  include "com/centreon/shared_ptr.hh"
 
 CCE_BEGIN()
 
@@ -36,11 +35,10 @@ namespace                configuration {
   namespace              applier {
     class                serviceescalation {
      public:
-                         serviceescalation();
-                         serviceescalation(
-                           serviceescalation const& right);
-                         ~serviceescalation() throw ();
-      serviceescalation& operator=(serviceescalation const& right);
+      serviceescalation();
+      serviceescalation(serviceescalation const& right) = delete;
+      ~serviceescalation() throw();
+      serviceescalation& operator=(serviceescalation const& right) = delete;
       void               add_object(
                            configuration::serviceescalation const& obj);
       void               expand_objects(configuration::state& s);

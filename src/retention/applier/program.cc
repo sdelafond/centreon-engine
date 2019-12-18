@@ -19,7 +19,7 @@
 
 #include "com/centreon/engine/common.hh"
 #include "com/centreon/engine/globals.hh"
-#include "com/centreon/engine/objects/command.hh"
+#include "com/centreon/engine/objects.hh"
 #include "com/centreon/engine/retention/applier/program.hh"
 #include "com/centreon/engine/retention/applier/utils.hh"
 #include "com/centreon/engine/string.hh"
@@ -110,10 +110,7 @@ void applier::program::apply(
       string::setstr(global_service_event_handler, *obj.global_service_event_handler());
 
     if (obj.next_comment_id().is_set())
-      next_comment_id = *obj.next_comment_id();
-
-    if (obj.next_downtime_id().is_set())
-      next_downtime_id = *obj.next_downtime_id();
+      comment::set_next_comment_id(*obj.next_comment_id());
 
     if (obj.next_event_id().is_set())
       next_event_id = *obj.next_event_id();

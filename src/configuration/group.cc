@@ -65,7 +65,7 @@ group<T>& group<T>::operator=(group const& other) {
     _is_null = other._is_null;
     _is_set = other._is_set;
   }
-  return (*this);
+  return *this;
 }
 
 /**
@@ -91,7 +91,7 @@ group<T>& group<T>::operator=(std::string const& other) {
     }
   }
   _is_set = true;
-  return (*this);
+  return *this;
 }
 
 /**
@@ -110,7 +110,7 @@ group<T>& group<T>::operator+=(group<T> const& other) {
            std::inserter(_data, _data.end()));
     _is_set = true;
   }
-  return (*this);
+  return *this;
 }
 
 /**
@@ -122,7 +122,7 @@ group<T>& group<T>::operator+=(group<T> const& other) {
  */
 template <typename T>
 bool group<T>::operator==(group const& other) const throw () {
-  return (_data == other._data);
+  return _data == other._data;
 }
 
 /**
@@ -134,7 +134,7 @@ bool group<T>::operator==(group const& other) const throw () {
  */
 template <typename T>
 bool group<T>::operator!=(group const& other) const throw () {
-  return (!operator==(other));
+  return !operator==(other);
 }
 
 /**
@@ -146,7 +146,7 @@ bool group<T>::operator!=(group const& other) const throw () {
  */
 template <typename T>
 bool group<T>::operator<(group const& other) const throw () {
-  return (_data < other._data);
+  return _data < other._data;
 }
 
 /**
@@ -161,6 +161,6 @@ void group<T>::reset() {
 }
 
 // Explicit instantiations.
-template class group<list_string>;
-template class group<set_string>;
-template class group<set_pair_string>;
+template class com::centreon::engine::configuration::group<list_string>;
+template class com::centreon::engine::configuration::group<set_string>;
+template class com::centreon::engine::configuration::group<set_pair_string>;

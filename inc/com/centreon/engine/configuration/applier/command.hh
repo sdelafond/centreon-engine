@@ -20,11 +20,15 @@
 #ifndef CCE_CONFIGURATION_APPLIER_COMMAND_HH
 #  define CCE_CONFIGURATION_APPLIER_COMMAND_HH
 
-#  include <set>
 #  include <string>
 #  include "com/centreon/engine/namespace.hh"
 
 CCE_BEGIN()
+
+// Forward declarations.
+namespace commands {
+  class command;
+}
 
 namespace             configuration {
   // Forward declarations.
@@ -35,9 +39,7 @@ namespace             configuration {
     class             command {
      public:
                       command();
-                      command(command const& right);
                       ~command() throw ();
-      command&        operator=(command const& right);
       void            add_object(configuration::command const& obj);
       void            expand_objects(configuration::state& s);
       void            modify_object(
@@ -48,8 +50,8 @@ namespace             configuration {
                         configuration::command const& obj);
 
      private:
-      void            _create_command(
-                        configuration::command const& obj);
+                      command(command const& right);
+      command&        operator=(command const& right);
     };
   }
 }

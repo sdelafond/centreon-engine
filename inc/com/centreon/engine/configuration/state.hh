@@ -40,7 +40,6 @@
 #  include "com/centreon/engine/logging/logger.hh"
 #  include "com/centreon/engine/namespace.hh"
 #  include "com/centreon/engine/string.hh"
-#  include "com/centreon/shared_ptr.hh"
 
 CCE_BEGIN()
 
@@ -194,6 +193,8 @@ namespace               configuration {
     void                enable_event_handlers(bool value);
     bool                enable_flap_detection() const throw ();
     void                enable_flap_detection(bool value);
+    bool                enable_macros_filter() const throw ();
+    void                enable_macros_filter(bool value);
     bool                enable_notifications() const throw ();
     void                enable_notifications(bool value);
     bool                enable_predictive_host_dependency_checks() const throw ();
@@ -236,6 +237,8 @@ namespace               configuration {
     set_host::const_iterator
                         hosts_find(host::key_type const& k) const;
     set_host::iterator  hosts_find(host::key_type const& k);
+    set_host::const_iterator
+                        hosts_find(std::string const& name) const;
     unsigned int        host_check_timeout() const throw ();
     void                host_check_timeout(unsigned int value);
     unsigned int        host_freshness_check_interval() const throw ();
@@ -280,6 +283,9 @@ namespace               configuration {
     void                low_host_flap_threshold(float value);
     float               low_service_flap_threshold() const throw ();
     void                low_service_flap_threshold(float value);
+    void                macros_filter(std::string const& value);
+    std::set<std::string> const&
+                        macros_filter() const;
     unsigned int        max_check_reaper_time() const throw ();
     void                max_check_reaper_time(unsigned int value);
     unsigned long       max_check_result_file_age() const throw ();
@@ -348,10 +354,11 @@ namespace               configuration {
                         servicegroups_find(servicegroup::key_type const& k);
     set_service const&  services() const throw ();
     set_service&        services() throw ();
-    set_service::const_iterator
-                        services_find(service::key_type const& k) const;
     set_service::iterator
                         services_find(service::key_type const& k);
+    set_service::const_iterator
+                        services_find(std::string const& host_name,
+                                      std::string const& service_desc) const;
     unsigned int        service_check_timeout() const throw ();
     void                service_check_timeout(unsigned int value);
     unsigned int        service_freshness_check_interval() const throw ();
@@ -394,9 +401,9 @@ namespace               configuration {
     void                time_change_threshold(unsigned int value);
     bool                translate_passive_host_checks() const throw ();
     void                translate_passive_host_checks(bool value);
-    umap<std::string, std::string> const&
+    std::unordered_map<std::string, std::string> const&
                         user() const throw ();
-    void                user(umap<std::string, std::string> const& value);
+    void                user(std::unordered_map<std::string, std::string> const& value);
     void                user(std::string const& key, std::string const& value);
     void                user(unsigned int key, std::string const& value);
     bool                use_aggressive_host_checking() const throw ();
@@ -421,10 +428,7 @@ namespace               configuration {
     void                use_true_regexp_matching(bool value);
 
   private:
-    struct              setters {
-      char const*       name;
-      bool              (*func)(state&, char const*);
-    };
+    typedef bool (*setter_func)(state&, char const*);
 
     void                _set_aggregate_status_updates(std::string const& value);
     void                _set_auth_file(std::string const& value);
@@ -538,6 +542,7 @@ namespace               configuration {
     bool                _enable_environment_macros;
     bool                _enable_event_handlers;
     bool                _enable_flap_detection;
+    bool                _enable_macros_filter;
     bool                _enable_notifications;
     bool                _enable_predictive_host_dependency_checks;
     bool                _enable_predictive_service_dependency_checks;
@@ -576,6 +581,8 @@ namespace               configuration {
     bool                _log_service_retries;
     float               _low_host_flap_threshold;
     float               _low_service_flap_threshold;
+    std::set<std::string>
+                        _macros_filter;
     unsigned int        _max_check_reaper_time;
     unsigned long       _max_check_result_file_age;
     unsigned long       _max_debug_file_size;
@@ -618,8 +625,7 @@ namespace               configuration {
     std::string         _service_perfdata_file_processing_command;
     unsigned int        _service_perfdata_file_processing_interval;
     std::string         _service_perfdata_file_template;
-    static setters const
-                        _setters[];
+    static std::unordered_map<std::string, setter_func> const _setters;
     float               _sleep_time;
     bool                _soft_state_dependencies;
     std::string         _state_retention_file;
@@ -628,7 +634,7 @@ namespace               configuration {
     set_timeperiod      _timeperiods;
     unsigned int        _time_change_threshold;
     bool                _translate_passive_host_checks;
-    umap<std::string, std::string>
+    std::unordered_map<std::string, std::string>
                         _users;
     bool                _use_aggressive_host_checking;
     bool                _use_check_result_path;
