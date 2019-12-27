@@ -6,25 +6,21 @@ Files: *
 Copyright: 2011-2013 Centreon
 License: GPL-2
 
-Files: build/CodeCoverage.cmake
+Files: cmake/CodeCoverage.cmake
 Copyright: 2012-2017 Lars Bilke
 License: BSD-3
 
-Files: build/broker/CMakeLists.txt,build/checks/CMakeLists.txt,build/commands/CMakeLists.txt,build/compatibility/CMakeLists.txt,build/conf/CMakeLists.txt,build/configuration/CMakeLists.txt,build/configuration/applier/CMakeLists.txt,build/deleter/CMakeLists.txt,build/events/CMakeLists.txt,build/logging/CMakeLists.txt,build/macros/CMakeLists.txt,build/modules/CMakeLists.txt,build/modules/bench/CMakeLists.txt,build/modules/external_commands/CMakeLists.txt,build/objects/CMakeLists.txt,build/package.cmake,build/retention/CMakeLists.txt,build/retention/applier/CMakeLists.txt,build/scripts/ws_stub_builder/CMakeLists.txt,build/test/CMakeLists.txt,build/test/broker/CMakeLists.txt,build/test/checks/CMakeLists.txt,build/test/commands/CMakeLists.txt,build/test/compatibility/CMakeLists.txt,build/test/configuration/CMakeLists.txt,build/test/configuration/applier/CMakeLists.txt,build/test/core/CMakeLists.txt,build/test/deleter/CMakeLists.txt,build/test/events/CMakeLists.txt,build/test/logging/CMakeLists.txt,build/test/macros/CMakeLists.txt,build/test/modules/CMakeLists.txt,build/test/modules/external_commands/CMakeLists.txt,build/test/modules/webservice/CMakeLists.txt,build/test/modules/webservice/server/CMakeLists.txt,build/test/objects/CMakeLists.txt,build/test/retention/CMakeLists.txt,build/test/retention/applier/CMakeLists.txt
+Files: conf/CMakeLists.txt modules/bench/CMakeLists.txt modules/external_commands/CMakeLists.txt modules/CMakeLists.txt tests/CMakeLists.txt src/downtimes/CMakeLists.txt src/deleter/CMakeLists.txt src/retention/CMakeLists.txt src/retention/applier/CMakeLists.txt src/configuration/CMakeLists.txt src/configuration/applier/CMakeLists.txt src/compatibility/CMakeLists.txt src/events/CMakeLists.txt src/broker/CMakeLists.txt src/macros/CMakeLists.txt src/commands/CMakeLists.txt src/simumod/CMakeLists.txt src/logging/CMakeLists.txt src/checks/CMakeLists.txt CMakeLists.txt test/retention/CMakeLists.txt test/configuration/CMakeLists.txt test/configuration/applier/CMakeLists.txt test/modules/external_commands/CMakeLists.txt test/modules/CMakeLists.txt test/core/CMakeLists.txt test/CMakeLists.txt test/events/CMakeLists.txt test/objects/CMakeLists.txt test/broker/CMakeLists.txt test/macros/CMakeLists.txt test/commands/CMakeLists.txt test/logging/CMakeLists.txt
 Copyright: 2011-2013 Merethis
 License: GPL-2
 
-Files: conf/*,doc/exploit/centenginestats.rst
+Files: conf/* doc/exploit/centenginestats.rst
 Copyright: Ethan Galstad, Merethis
 License: GPL-2
 
-Files: inc/*,modules/*,src/*
+Files: inc/* modules/* src/*
 Copyright: Ethan Galstad, Merethis, Centreon, Andreas Ericsson, Max Schubert, Nagios Core Development Team and Community Contributors, Icinga Development Team
 License: GPL-2
-
-Files: build/tests/googletest
-Copyright: 2008 Google Inc.
-License: BSD-3
 
 Files: debian/*
 Copyright: 2018 Sebastien Delafond <seb@debian.org>
